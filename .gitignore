@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+*.jsonl
+*.bak*
+node_modules/
+dist/
+.claude/
+/openspec/
+**/.claude-plugin/types/
+**/tsconfig.json

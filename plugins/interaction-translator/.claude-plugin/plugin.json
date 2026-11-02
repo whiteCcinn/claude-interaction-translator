@@ -1,0 +1,165 @@
+{
+  "name": "interaction-translator",
+  "version": "0.4.0",
+  "description": "Translate prompts and Claude replies with independent input and output languages using an API or local Codex CLI.",
+  "author": {
+    "name": "whiteCcinn",
+    "url": "https://github.com/whiteCcinn"
+  },
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "Translation backend",
+      "description": "Choose api for an HTTP endpoint or codex-cli for your local Codex login. You can change this later in /config or /plugin configure.",
+      "options": ["api", "codex-cli"],
+      "default": "api"
+    },
+    "input_language": {
+      "type": "string",
+      "title": "Input language",
+      "description": "Your input language. Defaults to Chinese; choose auto to detect it. en: English; jp: Japanese; cn: Simplified Chinese; fr: French.",
+      "options": ["cn", "auto", "en", "jp", "fr"],
+      "default": "cn"
+    },
+    "language": {
+      "type": "string",
+      "title": "Claude prompt language",
+      "description": "Language of the translated prompt sent to Claude. en: English; jp: Japanese; cn: Simplified Chinese; fr: French. Independent of final output language.",
+      "options": [
+        "en",
+        "jp",
+        "cn",
+        "fr"
+      ],
+      "default": "en"
+    },
+    "claude_language": {
+      "type": "string",
+      "title": "Claude reply language",
+      "description": "Language requested for Claude's response text. same-as-prompt inherits Claude prompt language; does not control internal thinking or tools.",
+      "options": ["same-as-prompt", "en", "jp", "cn", "fr"],
+      "default": "same-as-prompt"
+    },
+    "output_language": {
+      "type": "string",
+      "title": "Output language",
+      "description": "Final response language you read, Chinese by default. same-as-claude skips output translation. Output translation mode decides whether the transcript keeps the original or translated response.",
+      "options": ["cn", "en", "jp", "fr", "same-as-claude"],
+      "default": "cn"
+    },
+    "output_mode": {
+      "type": "string",
+      "title": "Output translation mode",
+      "description": "display-only 仅在界面翻译回复，模型历史和无界面输出保留原文（默认英文）；conversation 兼容旧版，同时改写显示和模型历史。",
+      "options": ["display-only", "conversation"],
+      "default": "display-only"
+    },
+    "codex_path_selection": {
+      "type": "string",
+      "title": "Codex executable",
+      "description": "仅 Codex CLI：跟随本地配置使用 PATH 中的 codex；选择手动输入后，在下一行填写可执行文件路径。",
+      "options": ["跟随本地配置", "手动输入"],
+      "default": "跟随本地配置"
+    },
+    "codex_path": {
+      "type": "string",
+      "title": "Codex executable · 手动值",
+      "description": "仅上方选择手动输入时生效：填写完整路径，不加引号或参数；允许路径中包含空格。跟随本地配置时无需填写。",
+      "default": ""
+    },
+    "codex_model_selection": {
+      "type": "string",
+      "title": "Codex translation model",
+      "description": "仅 Codex CLI：默认沿用本地模型，也可选择官方模型预设或在下一行手动填写模型 ID。预设是否可用取决于账号和服务。",
+      "options": ["跟随本地配置", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "手动输入"],
+      "default": "跟随本地配置"
+    },
+    "codex_model": {
+      "type": "string",
+      "title": "Codex model · 手动值",
+      "description": "仅上方选择手动输入时生效：填写当前 Codex 服务接受的模型 ID。选择跟随本地配置或预设时无需填写。",
+      "default": ""
+    },
+    "codex_reasoning_effort": {
+      "type": "string",
+      "title": "Codex reasoning effort",
+      "description": "仅 Codex CLI：默认沿用本地推理等级。low 或 medium 可减少翻译思考耗时；支持的等级取决于模型。手动输入的值填写在下一行。",
+      "options": ["跟随本地配置", "low", "medium", "high", "xhigh", "max", "手动输入"],
+      "default": "跟随本地配置"
+    },
+    "codex_reasoning_effort_manual": {
+      "type": "string",
+      "title": "Codex reasoning · 手动值",
+      "description": "仅上方选择手动输入时生效：填写 Codex 服务接受的推理等级，例如模型新增的等级。",
+      "default": ""
+    },
+    "codex_fast_mode": {
+      "type": "string",
+      "title": "Codex Fast mode",
+      "description": "仅 Codex CLI：默认沿用本地 Fast 设置；on 为翻译请求 Fast，off 为翻译关闭 Fast。与模型及推理等级独立，需要模型和账号支持，可能增加用量。",
+      "options": ["跟随本地配置", "on", "off"],
+      "default": "跟随本地配置"
+    },
+    "api_url_selection": {
+      "type": "string",
+      "title": "API URL",
+      "description": "仅 API：选择默认 GLM 地址，或选择手动输入并在下一行填写完整的 OpenAI 兼容 chat/completions 地址。",
+      "options": ["https://open.bigmodel.cn/api/coding/paas/v4/chat/completions", "手动输入"],
+      "default": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL · 手动值",
+      "description": "仅上方选择手动输入时生效：填写完整 HTTP 或 HTTPS 接口地址，不能只填域名或 /v1。",
+      "default": ""
+    },
+    "api_model_selection": {
+      "type": "string",
+      "title": "Translation model",
+      "description": "仅 API：选择默认 GLM 模型，或选择手动输入并在下一行填写接口支持的模型 ID。",
+      "options": ["glm-5.3-flash", "手动输入"],
+      "default": "glm-5.3-flash"
+    },
+    "model": {
+      "type": "string",
+      "title": "API model · 手动值",
+      "description": "仅上方选择手动输入时生效：填写翻译 API 接受的模型 ID。Codex CLI 使用独立的模型配置。",
+      "default": ""
+    },
+    "api_key_source": {
+      "type": "string",
+      "title": "API Key source",
+      "description": "仅 API：自动读取凭据依次检查安全存储、TRANSLATOR_API_KEY 和插件 .env；手动输入仅使用下一行的安全存储值。",
+      "options": ["自动读取凭据", "手动输入"],
+      "default": "自动读取凭据"
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API Key",
+      "description": "仅 API：原生遮罩输入并存入安全存储。手动输入来源要求填写；自动读取凭据来源也会优先使用此值。Codex CLI 无需填写。",
+      "sensitive": true
+    },
+    "reasoning_effort": {
+      "type": "string",
+      "title": "Reasoning effort",
+      "description": "API backend only. Use low for the default GLM model, or default to omit this field. Codex CLI uses the separate Codex reasoning effort setting.",
+      "options": [
+        "default",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default": "low"
+    }
+  },
+  "homepage": "https://github.com/whiteCcinn/claude-interaction-translator",
+  "repository": "https://github.com/whiteCcinn/claude-interaction-translator",
+  "license": "MIT",
+  "keywords": [
+    "translation",
+    "multilingual",
+    "claude-code",
+    "mods"
+  ]
+}

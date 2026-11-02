@@ -1,0 +1,165 @@
+{
+  "layout": "graph",
+  "direction": "right",
+  "style": "paper",
+  "animation": "flow",
+  "density": "airy",
+  "motion_level": "none",
+  "title": {
+    "prefix": "toy's Prompt",
+    "highlight": "Translator",
+    "subtitle": "Claude Prompt Translator · 实现原理手稿"
+  },
+  "signature": "toy / notes",
+  "canvas": {
+    "fps": 1,
+    "frames": 2
+  },
+  "nodes": [
+    {
+      "id": "input",
+      "label": "01 你的输入",
+      "body": "终端 / claude -p\n任意输入语言",
+      "icon": "message",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "green",
+      "x": 220,
+      "y": 240
+    },
+    {
+      "id": "hook",
+      "label": "02 拦截提交",
+      "body": "prompt.submit\n命令与空输入直通",
+      "icon": "event",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "purple",
+      "x": 605,
+      "y": 240
+    },
+    {
+      "id": "protect",
+      "label": "03 保护片段",
+      "body": "路径 / URL / 代码\n换成临时标记",
+      "icon": "shield",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "green",
+      "x": 990,
+      "y": 240
+    },
+    {
+      "id": "translate",
+      "label": "04 外部翻译",
+      "body": "OpenAI 兼容接口\nen / jp / cn / fr",
+      "icon": "brain",
+      "icon_style": "hero",
+      "icon_motion": "none",
+      "accent": "purple",
+      "x": 990,
+      "y": 470
+    },
+    {
+      "id": "restore",
+      "label": "05 还原检查",
+      "body": "标记完整，原样还原\n截断或异常则停止",
+      "icon": "check",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "green",
+      "x": 605,
+      "y": 470
+    },
+    {
+      "id": "claude",
+      "label": "06 交给 Claude",
+      "body": "译文 + 回复语言\nnext(...) 放行",
+      "icon": "terminal",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "purple",
+      "x": 220,
+      "y": 470
+    },
+    {
+      "id": "feedback",
+      "label": "等待时有提示",
+      "body": "动态点 + 耗时\n成功预览保留 3 秒",
+      "icon": "clock",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "amber",
+      "x": 220,
+      "y": 720
+    },
+    {
+      "id": "stop",
+      "label": "失败就停住",
+      "body": "HTTP / 译文 / 标记\n原文不会继续发送",
+      "icon": "error",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "pink",
+      "x": 605,
+      "y": 720
+    },
+    {
+      "id": "config",
+      "label": "接入只填 3 项",
+      "body": "API URL / Model\nAPI Key 安全存储",
+      "icon": "gear",
+      "icon_style": "illustrated",
+      "icon_motion": "none",
+      "accent": "purple",
+      "x": 990,
+      "y": 720
+    }
+  ],
+  "edges": [
+    {
+      "from": "input",
+      "to": "hook",
+      "label": "按回车",
+      "accent": "green"
+    },
+    {
+      "from": "hook",
+      "to": "protect",
+      "label": "普通文本",
+      "accent": "purple"
+    },
+    {
+      "from": "protect",
+      "to": "translate",
+      "label": "保护后文本",
+      "accent": "green"
+    },
+    {
+      "from": "translate",
+      "to": "restore",
+      "label": "拿到译文",
+      "accent": "purple"
+    },
+    {
+      "from": "restore",
+      "to": "claude",
+      "label": "检查通过",
+      "accent": "green"
+    },
+    {
+      "from": "restore",
+      "to": "stop",
+      "label": "检查失败",
+      "accent": "pink"
+    },
+    {
+      "from": "config",
+      "to": "translate",
+      "label": "你的模型",
+      "accent": "purple",
+      "style": "dashed"
+    }
+  ],
+  "footer": "默认英文 · 改语言自动生效 · 翻译发生在提交前，Claude 的回答不做二次翻译"
+}
