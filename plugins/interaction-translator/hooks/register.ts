@@ -8,7 +8,8 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { clearDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
+import { clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
+import { parseQuestions, questionSource } from "./question-translation"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -46,6 +47,39 @@ export function register(on: On, options: PluginOptions) {
     clearDisplay(display)
     if (feedback.current) clearFeedback($, feedback)
     return next(e)
+  })
+
+  on("tool.call", { tool: "AskUserQuestion" }, async (_, e, next) => {
+    const epoch = display.epoch
+    const close = () => closeQuestionDisplay(display, e.tool_use_id, epoch)
+    if (next.signal.aborted) close()
+    next.signal.addEventListener("abort", close, { once: true })
+    try { return await next(e) }
+    finally {
+      next.signal.removeEventListener("abort", close)
+      close()
+    }
+  })
+
+  on("ui.render", { component: "AskUserQuestion" }, async ($, e, next) => {
+    if (e.props.tool !== "AskUserQuestion" || languages.reply === languages.output || display.closedQuestions.has(e.requestId)) return next(e)
+    const source = questionSource(e.props.questions)
+    if (source === undefined || !displaySourceAllowed(source)) return next(e)
+    feedback.interactive = true
+    const entry = displayEntry(display, e.surface, e.requestId, source, false, languages.output, "question")
+    if (entry?.phase === "ready" && entry.translated !== undefined) {
+      const questions = parseQuestions(entry.translated)
+      if (questions) return next({ ...e, props: { ...e.props, questions } })
+    }
+    scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
+    if (entry?.phase !== "error") return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return Box({ flexDirection: "column", children: [
+      Text({ color: "red", wrap: "truncate-end", children: [displayFailure(languages.output)] }),
+      Button({ key: "retry-question-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
+        onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
+      await next(e),
+    ] })
   })
 
   on("ui.render", { component: "AssistantMessage" }, async ($, e, next) => {

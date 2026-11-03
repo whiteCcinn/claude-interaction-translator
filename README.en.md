@@ -141,6 +141,8 @@ Input translation failure stops submission. Display translation failure keeps th
 
 Display translations are cached only in memory. A reply with multiple visible blocks can trigger several calls. Repaints reuse the cache; reloads or resumed sessions may translate again. CLAUDE.md, skills, tool results, and images are not automatically translated; see [context language boundaries](docs/context-language-boundaries.md) for details (Chinese).
 
+Native choice dialogs (`AskUserQuestion`) also translate questions, tab headings and option wording, keeping the original until ready. Original option names remain selectable, with translated titles in their descriptions. Preview layouts receive a numbered translated choice guide below the question; code previews stay unchanged. Submitted choices are unchanged. Once you start selecting or typing, Claude Code may freeze that dialog's presentation to preserve your input, so it can remain original. Native button text such as `Submit` is outside the translation scope.
+
 ### Verify display-only behavior
 
 1. Set prompt and Claude reply languages to English, output to Chinese, and mode to `display-only`.

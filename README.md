@@ -141,6 +141,8 @@ claude plugin install interaction-translator@claude-interaction-translator \
 
 显示缓存仅在内存中保留；多块回复可能产生多次翻译调用，重绘复用缓存，重载或恢复会话后可能重新翻译。CLAUDE.md、Skill、工具结果和图片不会自动翻译，具体范围见[上下文语言边界](docs/context-language-boundaries.md)。
 
+原生选择面板（`AskUserQuestion`）也支持问题、页签标题和选项内容的显示翻译，完成前先显示原文。原始选项名称会保留，译名显示在说明中；有右侧预览时，问题下方会补充带序号的选项译文，代码预览保持原样。提交的选择不变。如果你已经开始选择或输入，Claude Code 可能固定本次面板内容，保留原文以保护当前选择；`Submit` 等原生按钮文字不属于翻译范围。
+
 ### 确认 display-only 已生效
 
 1. 确认提示词和 Claude 回复语言为英文，输出语言为中文，模式为 `display-only`。

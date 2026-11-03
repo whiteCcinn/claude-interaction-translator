@@ -6,6 +6,7 @@ import { requestTranslation } from "./translation-client"
 import type { ConfigurationState } from "./configuration-runtime"
 import { finishFeedback, startFeedback } from "./translation-feedback"
 import type { Feedback, FeedbackState } from "./translation-feedback"
+import { prepareQuestionTranslation, questionTranslationPrompt, restoreQuestionTranslation } from "./question-translation"
 
 export const MAX_DISPLAY_ENTRIES = 128
 export const MAX_DISPLAY_BYTES = 4 * 1024 * 1024
@@ -17,6 +18,8 @@ const encoder = new TextEncoder()
 
 export type DisplayEntry = {
   key: string
+  kind: "assistant" | "question"
+  requestId: string
   source: string
   bytes: number
   phase: "pending" | "loading" | "ready" | "error"
@@ -31,12 +34,14 @@ export type DisplayState = {
   running: Set<DisplayEntry>
   bytes: number
   activeSteps: number
+  epoch: number
+  closedQuestions: Set<string>
   scheduled?: Scheduled
   feedback?: FeedbackState
 }
 
 export function createDisplayState(feedback?: FeedbackState): DisplayState {
-  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, feedback }
+  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, epoch: 0, closedQuestions: new Set(), feedback }
 }
 
 export function displayOnly(options: PluginOptions): boolean { return options.output_mode !== "conversation" }
@@ -81,8 +86,9 @@ function makeRoom(state: DisplayState, additional: number, count: number, keep?:
   return state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES
 }
 
-export function displayEntry(state: DisplayState, surface: RenderSurface, requestId: string, source: string, summary: boolean, target: Language): DisplayEntry | undefined {
-  const key = JSON.stringify([surface, requestId, summary, target])
+export function displayEntry(state: DisplayState, surface: RenderSurface, requestId: string, source: string, summary: boolean, target: Language, kind: DisplayEntry["kind"] = "assistant"): DisplayEntry | undefined {
+  if (kind === "question" && state.closedQuestions.has(requestId)) return undefined
+  const key = JSON.stringify([surface, requestId, summary, target, kind])
   const previous = state.entries.get(key)
   if (previous?.source === source) {
     previous.visible = true
@@ -94,8 +100,12 @@ export function displayEntry(state: DisplayState, surface: RenderSurface, reques
   if (previous) removeEntry(state, previous)
   const bytes = encoder.encode(source).byteLength
   if (bytes > MAX_DISPLAY_SOURCE_BYTES) return undefined
+  if (state.pending.size >= MAX_DISPLAY_PENDING && kind === "question") {
+    const queued = Array.from(state.pending.values()).findLast(entry => entry.kind === "assistant")
+    if (queued) removeEntry(state, queued)
+  }
   if (state.pending.size >= MAX_DISPLAY_PENDING || !makeRoom(state, bytes, 1)) return undefined
-  const entry: DisplayEntry = { key, source, bytes, phase: "pending", visible: true, controller: new AbortController() }
+  const entry: DisplayEntry = { key, kind, requestId, source, bytes, phase: "pending", visible: true, controller: new AbortController() }
   state.entries.set(key, entry)
   state.pending.set(key, entry)
   state.bytes += bytes
@@ -103,13 +113,15 @@ export function displayEntry(state: DisplayState, surface: RenderSurface, reques
 }
 
 export function hideDisplay(state: DisplayState, surface: RenderSurface, requestId: string, summary: boolean, target: Language) {
-  const entry = state.entries.get(JSON.stringify([surface, requestId, summary, target]))
+  const entry = state.entries.get(JSON.stringify([surface, requestId, summary, target, "assistant"]))
   if (!entry) return
   entry.visible = false
   if (entry.phase === "pending" || entry.phase === "loading") removeEntry(state, entry)
 }
 
 export function clearDisplay(state: DisplayState) {
+  state.epoch += 1
+  state.closedQuestions.clear()
   state.scheduled?.timer?.cancel()
   state.scheduled = undefined
   for (const entry of state.entries.values()) entry.controller.abort()
@@ -119,17 +131,29 @@ export function clearDisplay(state: DisplayState) {
   state.bytes = 0
 }
 
+export function closeQuestionDisplay(state: DisplayState, requestId: string, epoch = state.epoch) {
+  if (epoch !== state.epoch) return
+  state.closedQuestions.add(requestId)
+  if (state.closedQuestions.size > MAX_DISPLAY_ENTRIES) {
+    const oldest = state.closedQuestions.values().next().value
+    if (oldest !== undefined) state.closedQuestions.delete(oldest)
+  }
+  for (const entry of state.entries.values()) if (entry.kind === "question" && entry.requestId === requestId) removeEntry(state, entry)
+}
+
 export function scheduleDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, source: Language, target: Language) {
-  if (state.scheduled || state.activeSteps || !state.pending.size || state.running.size >= MAX_DISPLAY_RUNNING) return
+  if (state.scheduled || !state.pending.size || state.running.size >= MAX_DISPLAY_RUNNING) return
+  if (state.activeSteps && !Array.from(state.pending.values()).some(entry => entry.kind === "question")) return
   const scheduled: Scheduled = {}
   state.scheduled = scheduled
   scheduled.timer = $.clock.after(DISPLAY_DELAY_MS, async () => {
     if (state.scheduled !== scheduled) return
     state.scheduled = undefined
-    if (state.activeSteps) return
     const work: Promise<void>[] = []
-    for (const entry of state.pending.values()) {
+    const pending = Array.from(state.pending.values()).sort((left, right) => Number(right.kind === "question") - Number(left.kind === "question"))
+    for (const entry of pending) {
       if (state.running.size >= MAX_DISPLAY_RUNNING) break
+      if (state.activeSteps && entry.kind !== "question") continue
       state.pending.delete(entry.key)
       if (state.entries.get(entry.key) !== entry || entry.controller.signal.aborted) continue
       state.running.add(entry)
@@ -147,10 +171,16 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
     if (state.feedback?.interactive && !(state.feedback.current?.stage === "input" && state.feedback.current.phase === "loading")) {
       feedback = await startFeedback($, state.feedback, "output", source, target, entry.controller.signal)
     }
-    const protectedText = protectText(entry.source)
-    const result = await requestTranslation($, options, configuration, translationPrompt(target, source, "response"), protectedText.text, 8192, entry.controller.signal)
+    const question = entry.kind === "question" ? prepareQuestionTranslation(entry.source) : undefined
+    if (entry.kind === "question" && !question) { entry.phase = "error"; return }
+    const protectedText = question ? undefined : protectText(entry.source)
+    const text = question?.text ?? protectedText?.text
+    if (text === undefined) { entry.phase = "error"; return }
+    const prompt = question ? questionTranslationPrompt(target, source) : translationPrompt(target, source, "response")
+    const result = await requestTranslation($, options, configuration, prompt, text, 8192, entry.controller.signal)
     if (state.entries.get(entry.key) !== entry || entry.controller.signal.aborted) return
-    const translated = "text" in result ? restoreText(result.text, protectedText) : undefined
+    const translated = "text" in result ? question ? restoreQuestionTranslation(result.text, question)
+      : protectedText ? restoreText(result.text, protectedText) : undefined : undefined
     if (translated === undefined) { entry.phase = "error"; return }
     const extra = encoder.encode(translated).byteLength
     if (extra > MAX_DISPLAY_SOURCE_BYTES || !makeRoom(state, extra, 0, entry)) { entry.phase = "error"; return }
