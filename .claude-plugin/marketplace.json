@@ -8,7 +8,7 @@
       "name": "interaction-translator",
       "source": "./plugins/interaction-translator",
       "description": "Translate prompts and Claude replies with independent input and output languages using an API or local Codex CLI.",
-      "version": "0.4.0"
+      "version": "0.4.1"
     }
   ],
   "description": "Translate Claude Code prompts and responses through an external model API or local Codex CLI."
