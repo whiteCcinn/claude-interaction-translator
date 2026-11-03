@@ -1,8 +1,47 @@
 import { expect, mock, test } from "claude-code/testing"
 import type { TurnStepChunk } from "claude-code"
+import { MAX_DISPLAY_PENDING, MAX_DISPLAY_SOURCE_BYTES } from "../hooks/display-translation"
 
 const step = { turnId: "display-only", index: 0, model: "claude-test", messageCount: 1 }
 const stop: TurnStepChunk = { kind: "stop", stopReason: "end_turn", usage: null }
+
+for (const backend of ["api", "codex-cli"]) {
+  test(`${backend} keeps the native original until its complete display translation is ready`, { options: { backend, claude_language: "fr" } }, async ($, on) => {
+    const clock = mock.clock(on)
+    on("config.list", () => ({ value: [] }))
+    on("env.get", () => ({ value: "example-token" }))
+    let calls = 0
+    on("http.fetch", async () => {
+      calls += 1
+      await clock.sleep(1000)
+      return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "完整的中文译文。" } }] }) } }
+    })
+    on("process.run", async () => {
+      calls += 1
+      await clock.sleep(1000)
+      return { value: { exitCode: 0, stdout: "完整的中文译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on("ui.render", { component: "AssistantMessage" }, ($, e) => {
+      expect(e.props.isSummary).toBe(true)
+      expect(e.props.onScreen).toEqual({ first: 0, last: 1, of: 2 })
+      return $.ui.resolve(e).Markdown({ text: e.props.text })
+    })
+    const props = { text: "Bonjour. Voici la réponse complète.", isFirstOfReply: true, isSummary: true as const, onScreen: { first: 0, last: 1, of: 2 } }
+    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
+    expect((await ui.find({ type: "Markdown", text: props.text }))?.text).toBe(props.text)
+    expect(calls).toBe(0)
+    await clock.advance(300)
+    expect(calls).toBe(1)
+    expect((await ui.find({ type: "Markdown", text: props.text }))?.text).toBe(props.text)
+    expect(await ui.find({ text: "完整的中文译文。" })).toBe(undefined)
+    await clock.advance(1000)
+    expect((await ui.find({ type: "Markdown", text: "完整的中文译文。" }))?.text).toBe("完整的中文译文。")
+    expect(await ui.find({ type: "Markdown", text: props.text })).toBe(undefined)
+    expect(props.text).toBe("Bonjour. Voici la réponse complète.")
+    expect(calls).toBe(1)
+    await ui.unmount()
+  })
+}
 
 test("display-only leaves headless response chunks and result in the original language", { options: { backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
   on("config.list", () => ({ value: [] }))
@@ -74,13 +113,18 @@ test("source updates discard stale translation completions", { options: { backen
     const text = e.init?.stdin ?? ""
     seen.push(text)
     if (text === "Old.") await clock.sleep(1000)
+    else await clock.sleep(2000)
     return { value: { exitCode: 0, stdout: text === "Old." ? "旧译文。" : "新译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Old.", isFirstOfReply: true } })
   await clock.advance(200)
   await ui.redraw({ text: "New.", isFirstOfReply: true })
+  expect((await ui.find({ type: "Markdown", text: "New." }))?.text).toBe("New.")
   await clock.advance(1500)
+  expect((await ui.find({ type: "Markdown", text: "New." }))?.text).toBe("New.")
+  expect(await ui.find({ text: "旧译文。" })).toBe(undefined)
+  await clock.advance(1000)
   expect((await ui.find({ type: "Markdown", text: "新译文。" }))?.text).toBe("新译文。")
   expect(await ui.find({ text: "旧译文。" })).toBe(undefined)
   expect(seen).toEqual(["Old.", "New."])
@@ -106,25 +150,32 @@ test("summary translation uses only the exact visible summary and keeps readonly
   await ui.unmount()
 })
 
-test("failure stays in the UI and retries only after the retry button is pressed", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("failure and retry retain the original until the retry succeeds", { options: { backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
-  on("process.run", () => {
+  on("process.run", async () => {
     calls += 1
+    if (calls > 1) await clock.sleep(1000)
     return { value: { exitCode: calls === 1 ? 1 : 0, stdout: calls === 1 ? "partial" : "你好。", stderr: "private diagnostics", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
   await clock.advance(500)
-  expect((await ui.find({ type: "Text", text: /输出翻译失败/ }))?.text).toContain("输出翻译失败")
+  expect((await ui.find({ type: "Markdown", text: "Hello." }))?.text).toBe("Hello.")
+  expect((await ui.find({ type: "Text", text: /输出翻译失败/ }))?.text).toContain("已保留原文")
   expect(await ui.find({ text: /private diagnostics|partial/ })).toBe(undefined)
   await ui.redraw()
   await clock.advance(1000)
   expect(calls).toBe(1)
   await ui.press({ key: "retry-output-translation" })
-  await clock.advance(500)
+  expect((await ui.find({ type: "Markdown", text: "Hello." }))?.text).toBe("Hello.")
+  await clock.advance(300)
+  expect((await ui.find({ type: "Markdown", text: "Hello." }))?.text).toBe("Hello.")
+  expect(await ui.find({ type: "Text", text: /输出翻译失败/ })).toBe(undefined)
+  await clock.advance(1000)
   expect((await ui.find({ type: "Markdown", text: "你好。" }))?.text).toBe("你好。")
+  expect(await ui.find({ type: "Markdown", text: "Hello." })).toBe(undefined)
   expect(calls).toBe(2)
   await ui.unmount()
 })
@@ -205,11 +256,61 @@ test("all active steps must settle before visible text translation starts", { op
   await clock.advance(500)
   await main
   expect(calls).toBe(0)
+  expect((await ui.find({ type: "Markdown", text: "Complete." }))?.text).toBe("Complete.")
   await clock.advance(1000)
   await child
   expect(calls).toBe(1)
   expect((await ui.find({ type: "Markdown", text: "完成。" }))?.text).toBe("完成。")
   await ui.unmount()
+})
+
+test("queue pressure and oversized sources preserve native originals", { options: { backend: "codex-cli" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("session.end", (_, e) => ({ sessionId: e.sessionId }))
+  let calls = 0
+  on("process.run", async () => {
+    calls += 1
+    await clock.sleep(1000)
+    return { value: { exitCode: 0, stdout: "完成。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  const rows = []
+  for (let index = 0; index <= MAX_DISPLAY_PENDING; index += 1) {
+    const text = `Original ${index}.`
+    const row = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
+    rows.push(row)
+    expect((await row.find({ type: "Markdown", text }))?.text).toBe(text)
+  }
+  // Exceed the byte limit without exceeding the host's 100,000-character tree limit.
+  const text = "原".repeat(Math.floor(MAX_DISPLAY_SOURCE_BYTES / 3) + 1)
+  const oversized = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
+  expect((await oversized.find({ type: "Markdown" }))?.text === text).toBe(true)
+  expect((await oversized.find({ type: "Text", text: /输出翻译失败/ }))?.text).toContain("已保留原文")
+  expect(calls).toBe(0)
+  for (const row of rows) await row.unmount()
+  await oversized.unmount()
+  await $.session.end({ reason: "clear", sessionId: "queue-test", resume: { id: "queue-test" } })
+  await clock.advance(500)
+  expect(calls).toBe(0)
+})
+
+test("display failure progress accurately reports the retained original", { options: { backend: "codex-cli" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("process.run", () => ({ value: { exitCode: 1, stdout: "", stderr: "private diagnostics", isStdoutTruncated: false, isStderrTruncated: false } }))
+  on("ui.render", ($, e) => {
+    const ui = $.ui.resolve(e)
+    return e.component === "AssistantMessage" ? ui.Markdown({ text: e.props.text }) : ui.Box({ children: [] })
+  })
+  const progress = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const message = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Original reply.", isFirstOfReply: true } })
+  await clock.advance(500)
+  expect((await message.find({ type: "Markdown", text: "Original reply." }))?.text).toBe("Original reply.")
+  expect((await progress.find({ type: "Text", text: /× 输出翻译失败/ }))?.text).toContain("已保留原文")
+  expect(await progress.find({ text: /未显示原文|private diagnostics/ })).toBe(undefined)
+  await message.unmount()
+  await progress.unmount()
 })
 
 test("source stream failures are not converted into translated answers or synthetic stops", async ($, on) => {

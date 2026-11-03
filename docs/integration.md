@@ -19,7 +19,7 @@
 | Claude prompt language | `language` | `en` | 输入翻译后发给 Claude 的语言，保留原有配置键 |
 | Claude reply language | `claude_language` | `same-as-prompt` | Claude 正文回复语言，可单独指定；默认跟随提示词语言 |
 | Output language | `output_language` | `cn` | 最终输出语言；`same-as-claude` 跳过输出翻译 |
-| Output translation mode | `output_mode` | `display-only` | 界面显示译文，模型历史保留原始回复；`conversation` 兼容旧版历史改写 |
+| Output translation mode | `output_mode` | `display-only` | 先显示原文，翻译完成后替换为译文，模型历史保留原始回复；`conversation` 兼容旧版历史改写 |
 
 各语言支持 `cn / en / jp / fr`。默认链路为：中文输入 → 英文提示词 → Claude 英文回复 → 中文输出。中文输入、法文输出可仅修改 `output_language=fr`。输入语言为提示，翻译模型仍会处理混合语言。
 
@@ -31,7 +31,9 @@
 
 旧行为可通过 `output_mode=conversation` 显式选择。该模式仍缓冲完整主会话响应、保护跨 chunk 代码块，同时改写显示和 transcript；后续模型会读到译文。`claude -p` 在 `display-only` 下直接输出原始回复、没有输出翻译调用；需要无界面译文时使用 `conversation`。
 
-默认模式不持久化译文缓存。插件重载或会话恢复后，可见内容会按需重译；后台子代理不因生成回复而自动翻译，但用户主动查看其对话时可翻译可见正文。翻译失败只影响界面，并提供显式重试，原始模型历史不变。当前保留原始会话记录；已经存入的旧中文历史不会被自动改写。其他中文入口见 [上下文语言边界](context-language-boundaries.md)。
+默认模式先显示当前可见原文，排队、翻译和重试期间都保留原文，完整译文通过校验后再替换对应正文。翻译失败时保留原文并提示错误，可显式重试；进度提示位于输入框上方。原始模型历史不变。
+
+默认模式不持久化译文缓存。插件重载或会话恢复后，可见内容会按需重译；后台子代理不因生成回复而自动翻译，但用户主动查看其对话时可翻译可见正文。当前保留原始会话记录；已经存入的旧中文历史不会被自动改写。其他中文入口见 [上下文语言边界](context-language-boundaries.md)。
 
 ## 安装时选择与后续修改
 
@@ -232,7 +234,7 @@ claude --plugin-dir ./plugins/interaction-translator
 
 最后一项是 Claude Code 自身的导航行为，插件不会修改这些快捷键设置。
 
-`display-only` 的显示队列、缓存和单块大小有上限；超限或翻译失败只在界面提示，不改写响应流。原始响应中断时保留中断状态，不补造正常结束标记。`conversation` 的输出缓冲超限时，则在后续正文块显示失败提示；若响应流随后中断，同样不补造结束标记或重复调用主模型。
+`display-only` 的显示队列、缓存和单块大小有上限；排队、超限或翻译失败时仍显示原文，不改写响应流。原始响应中断时保留中断状态，不补造正常结束标记。`conversation` 的输出缓冲超限时，则在后续正文块显示失败提示；若响应流随后中断，同样不补造结束标记或重复调用主模型。
 
 ## 已验证的范围
 

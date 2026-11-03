@@ -8,7 +8,7 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { clearDisplay, createDisplayState, displayCodeOnly, displayEntry, displayOnly, displaySourceAllowed, displayStatus, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
+import { clearDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -58,9 +58,11 @@ export function register(on: On, options: PluginOptions) {
     const entry = displayEntry(display, e.surface, e.requestId, e.props.text, Boolean(e.props.isSummary), languages.output)
     if (entry?.phase === "ready" && entry.translated !== undefined) return next({ ...e, props: { ...e.props, text: entry.translated } })
     scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
-    const { Box, Text, Button } = $.ui.resolve(e)
     const failed = entry?.phase === "error" || !displaySourceAllowed(e.props.text) || (!entry && !display.pending.size && !display.running.size)
-    const children = [Text({ color: failed ? "red" : "cyan", children: [displayStatus(languages.output, failed)] })]
+    // Keep the native source drawing until a complete current translation exists.
+    if (!failed) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const children = [await next(e), Text({ color: "red", children: [displayFailure(languages.output)] })]
     if (entry?.phase === "error") children.push(Button({
       key: "retry-output-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
       onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output),
@@ -78,10 +80,11 @@ export function register(on: On, options: PluginOptions) {
     const target = LANGUAGES[current.target]
     const color = current.phase === "error" ? "red" : current.phase === "done" ? "green" : "cyan"
     const translatorLabel = useCodex ? "Codex CLI" : configuration.resolved?.model ?? MODEL
+    const failureDetail = current.stage === "input" ? "原文未发送" : displayOnly(options) ? "已保留原文" : "未显示原文"
     const title = current.phase === "loading"
       ? `${stage}中${[".", "..", "..."][current.frame % 3]}  ${current.elapsed.toFixed(1)} 秒 · ${target.label} (${current.target}) · ${translatorLabel}`
       : current.phase === "done" ? `✓ ${stage}完成 · ${target.label} (${current.target}) · ${current.elapsed.toFixed(1)} 秒`
-        : `× ${stage}失败 · ${current.stage === "input" ? "原文未发送" : "未显示原文"}`
+        : `× ${stage}失败 · ${failureDetail}`
     const content = [Text({ color, children: [title], wrap: "truncate-end" })]
     if (current.detail && e.props.maxRows >= 4) content.push(Text({ dimColor: true, children: [current.detail], wrap: "truncate-end" }))
     const compact = e.props.bodyColumns < 32 || e.props.maxRows < 3

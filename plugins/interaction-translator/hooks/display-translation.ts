@@ -1,6 +1,6 @@
 import type { EngineInterface, PluginOptions, RenderSurface, Timer } from "claude-code"
 import type { Language } from "./languages"
-import { outputFailure, translationPrompt } from "./languages"
+import { translationPrompt } from "./languages"
 import { protectText, restoreText } from "./protected-text"
 import { requestTranslation } from "./translation-client"
 import type { ConfigurationState } from "./configuration-runtime"
@@ -163,7 +163,7 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
   } finally {
     state.running.delete(entry)
     try {
-      if (state.feedback) await finishFeedback($, state.feedback, feedback, entry.phase === "ready", entry.phase === "error" ? outputFailure(target) : undefined)
+      if (state.feedback) await finishFeedback($, state.feedback, feedback, entry.phase === "ready", entry.phase === "error" ? displayFailure(target) : undefined)
     } catch {
       // A progress-card failure must not change a completed UI translation.
     }
@@ -185,7 +185,11 @@ export function retryDisplay($: EngineInterface, options: PluginOptions, configu
   $.ui.invalidate("ui.render")
 }
 
-export function displayStatus(target: Language, failed: boolean): string {
-  if (failed) return outputFailure(target)
-  return { cn: "输出翻译中…", en: "Translating response…", jp: "応答を翻訳中…", fr: "Traduction de la réponse…" }[target]
+export function displayFailure(target: Language): string {
+  return {
+    cn: "输出翻译失败，已保留原文。请检查翻译配置或缩短回复后重试。",
+    en: "Output translation failed; the original response is still displayed. Check the translator settings or retry with a shorter response.",
+    jp: "出力の翻訳に失敗しました。原文を表示しています。翻訳設定を確認するか、短い応答で再試行してください。",
+    fr: "Échec de la traduction de sortie ; la réponse originale reste affichée. Vérifiez les paramètres ou réessayez avec une réponse plus courte.",
+  }[target]
 }
