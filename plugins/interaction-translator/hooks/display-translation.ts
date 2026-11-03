@@ -35,13 +35,37 @@ export type DisplayState = {
   bytes: number
   activeSteps: number
   epoch: number
+  freshResponses: Set<string>
   closedQuestions: Set<string>
   scheduled?: Scheduled
   feedback?: FeedbackState
 }
 
 export function createDisplayState(feedback?: FeedbackState): DisplayState {
-  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, epoch: 0, closedQuestions: new Set(), feedback }
+  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, epoch: 0, freshResponses: new Set(), closedQuestions: new Set(), feedback }
+}
+
+export function recordFreshResponse(state: DisplayState, requestId: string, blockCount = 1) {
+  const ids = [requestId]
+  // Native 2.1.316/317 also render per-content-block UUIDs. The index is the
+  // original content position, including thinking/tool blocks, even for a
+  // single text block following earlier multi-block messages in the thread.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+    const count = Number.isInteger(blockCount) ? Math.min(Math.max(0, blockCount), MAX_DISPLAY_ENTRIES - 1) : 0
+    for (let index = 0; index < count; index++) ids.push(requestId.slice(0, 24) + index.toString(16).padStart(12, "0"))
+  }
+  for (const id of ids) {
+    state.freshResponses.add(id)
+    if (state.freshResponses.size > MAX_DISPLAY_ENTRIES) {
+      const oldest = state.freshResponses.values().next().value
+      if (oldest !== undefined) state.freshResponses.delete(oldest)
+    }
+  }
+}
+
+export function assistantDisplayAllowed(state: DisplayState, surface: RenderSurface, requestId: string, summary: boolean, target: Language): boolean {
+  // An owned cache entry remains eligible even after its recent ID is evicted.
+  return state.freshResponses.has(requestId) || state.entries.has(JSON.stringify([surface, requestId, summary, target, "assistant"]))
 }
 
 export function displayOnly(options: PluginOptions): boolean { return options.output_mode !== "conversation" }
@@ -121,6 +145,7 @@ export function hideDisplay(state: DisplayState, surface: RenderSurface, request
 
 export function clearDisplay(state: DisplayState) {
   state.epoch += 1
+  state.freshResponses.clear()
   state.closedQuestions.clear()
   state.scheduled?.timer?.cancel()
   state.scheduled = undefined

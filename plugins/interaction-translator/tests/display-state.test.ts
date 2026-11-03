@@ -1,5 +1,33 @@
 import { expect, test } from "claude-code/testing"
 import { createDisplayState, displayEntry, clearDisplay, incompleteCode, MAX_DISPLAY_ENTRIES, MAX_DISPLAY_BYTES, MAX_DISPLAY_SOURCE_BYTES } from "../hooks/display-translation"
+import { assistantDisplayAllowed, recordFreshResponse } from "../hooks/display-translation"
+
+test("native assistant block zero uses the recorded response UUID with its block suffix", () => {
+  const state = createDisplayState()
+  recordFreshResponse(state, "5cf9480d-015d-468f-8880-5c8151621aab", 3)
+  expect(assistantDisplayAllowed(state, "terminal", "5cf9480d-015d-468f-8880-000000000000", false, "cn")).toBe(true)
+  expect(assistantDisplayAllowed(state, "desktop", "5cf9480d-015d-468f-8880-000000000002", true, "cn")).toBe(true)
+  expect(assistantDisplayAllowed(state, "terminal", "5cf9480d-015d-468f-8880-000000000003", false, "cn")).toBe(false)
+  expect(assistantDisplayAllowed(state, "terminal", "5cf9480d-015d-468f-8880-5c8151621aab", false, "cn")).toBe(true)
+  expect(assistantDisplayAllowed(state, "terminal", "5cf9480d-015d-468f-8881-000000000000", false, "cn")).toBe(false)
+})
+
+test("fresh response identities stay bounded while existing cache entries remain usable", () => {
+  const state = createDisplayState()
+  expect(assistantDisplayAllowed(state, "terminal", "old", false, "cn")).toBe(false)
+  recordFreshResponse(state, "current")
+  expect(assistantDisplayAllowed(state, "terminal", "current", true, "cn")).toBe(true)
+  const cached = displayEntry(state, "terminal", "current", "Reply.", false, "cn")
+  expect(cached).toBeDefined()
+  for (let i = 0; i < MAX_DISPLAY_ENTRIES; i++) recordFreshResponse(state, `next-${i}`)
+  expect(state.freshResponses.size).toBe(MAX_DISPLAY_ENTRIES)
+  expect(state.freshResponses.has("current")).toBe(false)
+  expect(assistantDisplayAllowed(state, "terminal", "current", false, "cn")).toBe(true)
+  expect(assistantDisplayAllowed(state, "desktop", "current", false, "cn")).toBe(false)
+  clearDisplay(state)
+  expect(state.freshResponses.size).toBe(0)
+  expect(assistantDisplayAllowed(state, "terminal", "current", false, "cn")).toBe(false)
+})
 
 test("visible cache entries are pinned rather than evicted into an automatic translation loop", () => {
   const state = createDisplayState()

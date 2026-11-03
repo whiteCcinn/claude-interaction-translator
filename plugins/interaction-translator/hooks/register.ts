@@ -8,7 +8,7 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
+import { assistantDisplayAllowed, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, recordFreshResponse, retryDisplay, scheduleDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
@@ -40,9 +40,28 @@ export function register(on: On, options: PluginOptions) {
   })
 
   on("session.start", ($, e, next) => {
+    clearDisplay(display)
     feedback.interactive = e.isInteractive
     if (!e.isInteractive && feedback.current) clearFeedback($, feedback)
     return next(e)
+  })
+
+  on("command.run", { command: "resume" }, ($, e, next) => {
+    clearDisplay(display)
+    return next(e)
+  })
+
+  on("session.append", { door: "response" }, async ($, e, next) => {
+    const epoch = display.epoch
+    const stored = await next(e)
+    if (!displayOnly(options) || epoch !== display.epoch || !stored.uuid || stored.message?.type !== "assistant") return stored
+    recordFreshResponse(display, stored.uuid, stored.message.content.length)
+    // A surface can draw the original before the row is stored. Redraw once
+    // its identity is known; never infer freshness from rendered wording.
+    if (feedback.interactive) {
+      try { $.ui.invalidate("ui.render") } catch { /* A detached UI does not affect the stored response. */ }
+    }
+    return stored
   })
 
   on("session.end", async ($, e, next) => {
@@ -121,6 +140,7 @@ export function register(on: On, options: PluginOptions) {
 
   on("ui.render", { component: "AssistantMessage" }, async ($, e, next) => {
     if (!displayOnly(options) || languages.reply === languages.output) return next(e)
+    if (!assistantDisplayAllowed(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)) return next(e)
     if (!e.props.text.trim() || e.props.onScreen === null || (displaySourceAllowed(e.props.text) && (incompleteCode(e.props.text) || displayCodeOnly(e.props.text)))) {
       hideDisplay(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)
       return next(e)

@@ -1,5 +1,6 @@
 import { expect, mock, test } from "claude-code/testing"
 import type { TurnStepChunk } from "claude-code"
+import { mountFreshDisplay } from "./display-fixtures"
 import { MAX_DISPLAY_PENDING, MAX_DISPLAY_SOURCE_BYTES } from "../hooks/display-translation"
 
 const step = { turnId: "display-only", index: 0, model: "claude-test", messageCount: 1 }
@@ -27,7 +28,7 @@ for (const backend of ["api", "codex-cli"]) {
       return $.ui.resolve(e).Markdown({ text: e.props.text })
     })
     const props = { text: "Bonjour. Voici la réponse complète.", isFirstOfReply: true, isSummary: true as const, onScreen: { first: 0, last: 1, of: 2 } }
-    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
+    const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
     expect((await ui.find({ type: "Markdown", text: props.text }))?.text).toBe(props.text)
     expect(calls).toBe(0)
     await clock.advance(300)
@@ -68,7 +69,7 @@ test("display-only leaves headless response chunks and result in the original la
   expect(calls).toBe(0)
 })
 
-test("display-only translates an existing visible assistant row without rewriting its source", { options: { backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
+test("display-only translates a newly appended visible assistant row without rewriting its source", { options: { backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("session.start", (_, e) => ({ cwd: e.cwd }))
@@ -81,7 +82,7 @@ test("display-only translates an existing visible assistant row without rewritin
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   await $.session.start({ cwd: "/tmp/display-translation", surface: "terminal", isInteractive: true })
   const props = { text: "Hello.", isFirstOfReply: true }
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
   await clock.advance(500)
   expect((await ui.find({ type: "Markdown", text: "你好。" }))?.text).toBe("你好。")
   expect(props.text).toBe("Hello.")
@@ -96,7 +97,7 @@ test("repaints and resize do not repeat a completed visible translation", { opti
   on("process.run", () => { calls += 1; return { value: { exitCode: 0, stdout: "你好。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } } })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const props = { text: "Hello.", isFirstOfReply: true }
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
   await clock.advance(500)
   await ui.redraw(props)
   await clock.advance(1000)
@@ -117,7 +118,7 @@ test("source updates discard stale translation completions", { options: { backen
     return { value: { exitCode: 0, stdout: text === "Old." ? "旧译文。" : "新译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Old.", isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Old.", isFirstOfReply: true } })
   await clock.advance(200)
   await ui.redraw({ text: "New.", isFirstOfReply: true })
   expect((await ui.find({ type: "Markdown", text: "New." }))?.text).toBe("New.")
@@ -144,7 +145,7 @@ test("summary translation uses only the exact visible summary and keeps readonly
     expect(e.props.isFirstOfReply).toBe(false)
     return $.ui.resolve(e).Markdown({ text: e.props.text })
   })
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Visible summary.", isFirstOfReply: false, isSummary: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Visible summary.", isFirstOfReply: false, isSummary: true } })
   await clock.advance(500)
   expect((await ui.find({ type: "Markdown", text: "可见摘要。" }))?.text).toBe("可见摘要。")
   await ui.unmount()
@@ -160,7 +161,7 @@ test("failure and retry retain the original until the retry succeeds", { options
     return { value: { exitCode: calls === 1 ? 1 : 0, stdout: calls === 1 ? "partial" : "你好。", stderr: "private diagnostics", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
   await clock.advance(500)
   expect((await ui.find({ type: "Markdown", text: "Hello." }))?.text).toBe("Hello.")
   expect((await ui.find({ type: "Text", text: /输出翻译失败/ }))?.text).toContain("已保留原文")
@@ -192,7 +193,7 @@ test("offscreen rows and incomplete code units never start background translatio
     { text: "file.go` now", isFirstOfReply: false },
     { text: "fmt.Println(1)\n```", isFirstOfReply: false },
   ]) {
-    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
+    const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props })
     await clock.advance(500)
     expect((await ui.find({ type: "Markdown", text: props.text }))?.text).toBe(props.text)
     await ui.unmount()
@@ -207,7 +208,7 @@ test("code-only visible blocks are preserved without a translation request", { o
   on("process.run", () => { calls += 1; return { value: { exitCode: 0, stdout: "__GLM_KEEP_0__", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } } })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const text = '```go\nfmt.Println("hello")\n```'
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
   await clock.advance(500)
   expect((await ui.find({ type: "Markdown", text }))?.text).toBe(text)
   expect(calls).toBe(0)
@@ -227,8 +228,8 @@ test("visible display translation keeps the output progress card", { options: { 
     return e.component === "AssistantMessage" ? ui.Markdown({ text: e.props.text }) : ui.Box({ children: [] })
   })
   await $.session.start({ cwd: "/tmp/display-progress", surface: "terminal", isInteractive: true })
-  const progress = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
-  const message = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
+  const progress = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const message = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
   await clock.advance(300)
   expect((await progress.find({ type: "Text", text: /输出翻译中/ }))?.text).toContain("Codex CLI")
   await clock.advance(1000)
@@ -252,7 +253,7 @@ test("all active steps must settle before visible text translation starts", { op
   const main = (async () => { for await (const _ of $.turn.step(step)) {} })()
   const child = (async () => { for await (const _ of $.turn.step({ ...step, turnId: "child", agentId: "child-agent" })) {} })()
   await clock.settle()
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Complete.", isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Complete.", isFirstOfReply: true } })
   await clock.advance(500)
   await main
   expect(calls).toBe(0)
@@ -278,13 +279,13 @@ test("queue pressure and oversized sources preserve native originals", { options
   const rows = []
   for (let index = 0; index <= MAX_DISPLAY_PENDING; index += 1) {
     const text = `Original ${index}.`
-    const row = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
+    const row = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
     rows.push(row)
     expect((await row.find({ type: "Markdown", text }))?.text).toBe(text)
   }
   // Exceed the byte limit without exceeding the host's 100,000-character tree limit.
   const text = "原".repeat(Math.floor(MAX_DISPLAY_SOURCE_BYTES / 3) + 1)
-  const oversized = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
+  const oversized = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text, isFirstOfReply: true } })
   expect((await oversized.find({ type: "Markdown" }))?.text === text).toBe(true)
   expect((await oversized.find({ type: "Text", text: /输出翻译失败/ }))?.text).toContain("已保留原文")
   expect(calls).toBe(0)
@@ -303,8 +304,8 @@ test("display failure progress accurately reports the retained original", { opti
     const ui = $.ui.resolve(e)
     return e.component === "AssistantMessage" ? ui.Markdown({ text: e.props.text }) : ui.Box({ children: [] })
   })
-  const progress = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
-  const message = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Original reply.", isFirstOfReply: true } })
+  const progress = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const message = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Original reply.", isFirstOfReply: true } })
   await clock.advance(500)
   expect((await message.find({ type: "Markdown", text: "Original reply." }))?.text).toBe("Original reply.")
   expect((await progress.find({ type: "Text", text: /× 输出翻译失败/ }))?.text).toContain("已保留原文")
@@ -344,7 +345,7 @@ test("display-only does not replace oversized source streams", async ($, on) => 
 test("leaving the viewport before scheduling cancels queued display work", { options: { backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
   await ui.redraw({ text: "Hello.", isFirstOfReply: true, onScreen: null })
   await clock.advance(1000)
   expect((await ui.find({ type: "Markdown", text: "Hello." }))?.text).toBe("Hello.")
@@ -357,7 +358,7 @@ test("clearing a visible row before scheduling cancels its obsolete translation"
   let calls = 0
   on("process.run", () => { calls += 1; return { value: { exitCode: 0, stdout: "旧译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } } })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Old.", isFirstOfReply: true } })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Old.", isFirstOfReply: true } })
   await ui.redraw({ text: "  ", isFirstOfReply: true })
   await clock.advance(1000)
   expect(calls).toBe(0)
@@ -375,8 +376,8 @@ test("an offscreen attached surface cannot cancel the terminal's visible transla
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const props = { text: "Terminal text.", isFirstOfReply: true }
-  const terminal = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "shared-row", props })
-  const desktop = await $.ui.mount({ plugin: "interaction-translator", surface: "desktop", component: "AssistantMessage", requestId: "shared-row", props: { ...props, onScreen: null } })
+  const terminal = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "shared-row", props })
+  const desktop = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "desktop", component: "AssistantMessage", requestId: "shared-row", props: { ...props, onScreen: null } })
   await clock.advance(1000)
   expect(sources).toEqual(["Terminal text."])
   expect((await terminal.find({ type: "Markdown", text: "终端译文。" }))?.text).toBe("终端译文。")
@@ -395,8 +396,8 @@ test("attached surfaces keep their exact visible text and translations independe
     return { value: { exitCode: 0, stdout: source === "Terminal text." ? "终端译文。" : "桌面译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const terminal = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "shared-row", props: { text: "Terminal text.", isFirstOfReply: true } })
-  const desktop = await $.ui.mount({ plugin: "interaction-translator", surface: "desktop", component: "AssistantMessage", requestId: "shared-row", props: { text: "Desktop text.", isFirstOfReply: true } })
+  const terminal = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "shared-row", props: { text: "Terminal text.", isFirstOfReply: true } })
+  const desktop = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "desktop", component: "AssistantMessage", requestId: "shared-row", props: { text: "Desktop text.", isFirstOfReply: true } })
   await clock.advance(1000)
   expect(sources).toEqual(["Terminal text.", "Desktop text."])
   expect((await terminal.find({ type: "Markdown", text: "终端译文。" }))?.text).toBe("终端译文。")
@@ -421,7 +422,7 @@ test("display translation runs at most two backend calls concurrently", { option
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const rows = []
-  for (let index = 0; index < 5; index += 1) rows.push(await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: `Reply ${index}.`, isFirstOfReply: true } }))
+  for (let index = 0; index < 5; index += 1) rows.push(await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: `Reply ${index}.`, isFirstOfReply: true } }))
   await clock.advance(300)
   expect(calls).toBe(2)
   expect(active).toBe(2)
@@ -446,13 +447,13 @@ test("session clear drops queued work and ignores late results from the previous
     return { value: { exitCode: 0, stdout: text === "Old." ? "旧会话译文。" : "新会话译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
-  const old = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "row", props: { text: "Old.", isFirstOfReply: true } })
+  const old = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "row", props: { text: "Old.", isFirstOfReply: true } })
   await clock.advance(200)
-  const queued = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Queued.", isFirstOfReply: true } })
+  const queued = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Queued.", isFirstOfReply: true } })
   await old.unmount()
   await queued.unmount()
   await $.session.end({ reason: "clear", sessionId: "old-session", resume: { id: "old-session" } })
-  const current = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "row", props: { text: "New.", isFirstOfReply: true } })
+  const current = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", requestId: "row", props: { text: "New.", isFirstOfReply: true } })
   await clock.advance(2000)
   expect(sources).toEqual(["Old.", "New."])
   expect((await current.find({ type: "Markdown", text: "新会话译文。" }))?.text).toBe("新会话译文。")
