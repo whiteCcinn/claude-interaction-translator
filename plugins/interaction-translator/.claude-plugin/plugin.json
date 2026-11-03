@@ -1,6 +1,7 @@
 {
   "name": "interaction-translator",
-  "version": "0.4.1",
+  "version": "0.4.2",
+  "types": "./types/index.d.ts",
   "description": "Translate prompts and Claude replies with independent input and output languages using an API or local Codex CLI.",
   "author": {
     "name": "whiteCcinn",

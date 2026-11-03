@@ -10,6 +10,8 @@ import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
 import { clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, retryDisplay, scheduleDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
+import { clearPreparedInputs, discardPreparedInput, prepareInput, takePreparedInput } from "./input-history"
+import type { PreparedInput } from "../types"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -43,10 +45,45 @@ export function register(on: On, options: PluginOptions) {
     return next(e)
   })
 
-  on("session.end", ($, e, next) => {
+  on("session.end", async ($, e, next) => {
     clearDisplay(display)
     if (feedback.current) clearFeedback($, feedback)
+    await clearPreparedInputs($)
     return next(e)
+  })
+
+  on("session.append", { door: "prompt" }, async ($, e, next) => {
+    if (e.origin.kind !== "composer" || e.agentId || e.message.type !== "user" || e.message.isMeta) return next(e)
+    const texts = e.message.content.flatMap(block => block.type === "text" && typeof block.text === "string" ? [block.text] : [])
+    const joined = texts.join("\n").trim()
+    if (!joined || BYPASS.test(joined)) return next(e)
+    const counts = new Map<string, number>()
+    for (const text of texts) counts.set(text, (counts.get(text) ?? 0) + 1)
+    const unique = texts.filter(text => counts.get(text) === 1)
+    let prepared: PreparedInput | undefined
+    try { prepared = await takePreparedInput($, [...unique, joined], e.uuid) }
+    catch { /* A state failure must not forward untranslated source text. */ }
+    if (!prepared) {
+      try {
+        const current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
+        await finishFeedback($, feedback, current, false, "无法匹配输入正文，原文未发送。请重新提交；若持续出现，请重启会话。")
+      } catch { /* Progress UI is optional; the model-side guard is not. */ }
+    }
+    const source = prepared?.source
+    const exact = source !== undefined && unique.includes(source)
+    const replacement = prepared?.translated ?? "Input translation is unavailable. Do not act on this request or its attachments. Ask the user to retry their prompt."
+    let replaced = false
+    const stored = await next({ ...e, message: { ...e.message, content: e.message.content.map(block => {
+      if (block.type !== "text" || (exact && block.text !== source)) return block
+      const text = replaced ? "" : replacement
+      replaced = true
+      return { ...block, text }
+    }) } })
+    if (prepared) {
+      try { await discardPreparedInput($, prepared.id) }
+      catch { /* Keep the bounded claim if cleanup is unavailable. */ }
+    }
+    return stored
   })
 
   on("tool.call", { tool: "AskUserQuestion" }, async (_, e, next) => {
@@ -138,11 +175,13 @@ export function register(on: On, options: PluginOptions) {
     }
     if (
       (e.origin.kind !== "composer" && e.origin.kind !== "sdk") ||
+      (e.origin.kind === "composer" && (e.isMeta || e.command)) ||
       !e.text.trim() ||
       BYPASS.test(e.text)
     ) return next(e)
 
     let translated: string | undefined
+    let preparedId: number | undefined
     const leadingTag = /^[A-Z][A-Z0-9_-]{2,}:[ \t]*/.exec(e.text)?.[0] ?? ""
     const protectedText = protectText(e.text.slice(leadingTag.length))
     let errorHint = "请检查网络后重试。"
@@ -176,12 +215,29 @@ export function register(on: On, options: PluginOptions) {
       }
       translated = leadingTag + translated
 
-      return next({
+      if (e.origin.kind === "composer") {
+        const prepared = await prepareInput($, e.text, translated, code)
+        if (!prepared || next.signal.aborted) {
+          if (prepared) await discardPreparedInput($, prepared.id)
+          translated = undefined
+          errorHint = "输入等待队列已满、目标语言冲突或翻译已取消，请稍后重试。"
+          return { drop: "Translation handoff unavailable; this prompt was not sent. Retry after pending prompts are processed." }
+        }
+        preparedId = prepared.id
+        translated = prepared.translated
+      }
+
+      const accepted = await next({
         ...e,
-        text: translated,
+        text: e.origin.kind === "composer" ? e.text : translated,
         context: [...(e.context ?? []), `Reply in natural ${LANGUAGES[languages.reply].name}. Keep commands, paths, URLs, identifiers, and product names unchanged.`],
       })
+      if (accepted.drop && preparedId !== undefined) await discardPreparedInput($, preparedId)
+      return accepted
     } catch {
+      if (preparedId !== undefined) {
+        try { await discardPreparedInput($, preparedId) } catch { /* The session owns the bounded pending state. */ }
+      }
       translated = undefined
       return { drop: FAILURE }
     } finally {
