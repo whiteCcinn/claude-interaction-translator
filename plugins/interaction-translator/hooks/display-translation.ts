@@ -26,6 +26,7 @@ export type DisplayEntry = {
   bytes: number
   phase: "idle" | "pending" | "loading" | "ready" | "error"
   failure?: "queue"
+  automaticFinal?: boolean
   visible: boolean
   translated?: string
   controller: AbortController
@@ -74,6 +75,7 @@ export function assistantDisplayAllowed(state: DisplayState, surface: RenderSurf
 
 export function displayOnly(options: PluginOptions): boolean { return options.output_mode !== "conversation" }
 export function manualDisplay(options: PluginOptions): boolean { return displayOnly(options) && options.output_trigger !== "auto" }
+export function finalDisplay(options: PluginOptions): boolean { return displayOnly(options) && options.output_trigger === "final" }
 export function displaySourceAllowed(text: string): boolean { return encoder.encode(text).byteLength <= MAX_DISPLAY_SOURCE_BYTES }
 
 export function displayCodeOnly(text: string): boolean {
@@ -246,7 +248,7 @@ export function retryDisplay($: EngineInterface, options: PluginOptions, configu
   requestDisplay($, options, configuration, state, entry, source, target)
 }
 
-export function requestDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language) {
+export function requestDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language, automaticFinal = false) {
   if (state.entries.get(entry.key) !== entry || !entry.visible || (entry.phase !== "idle" && entry.phase !== "error") || (entry.kind === "assistant" && state.activeSteps)) return
   if (state.pending.size >= MAX_DISPLAY_PENDING) {
     entry.phase = "error"
@@ -255,11 +257,18 @@ export function requestDisplay($: EngineInterface, options: PluginOptions, confi
     return
   }
   entry.controller = new AbortController()
+  entry.automaticFinal = automaticFinal
   entry.failure = undefined
   entry.phase = "pending"
   state.pending.set(entry.key, entry)
   scheduleDisplay($, options, configuration, state, source, target)
   $.ui.invalidate("ui.render")
+}
+
+export function cancelFinalDisplay(state: DisplayState) {
+  for (const entry of state.entries.values()) {
+    if (entry.automaticFinal && (entry.phase === "pending" || entry.phase === "loading")) removeEntry(state, entry)
+  }
 }
 
 export function manualDisplayTarget(state: DisplayState, surface: RenderSurface): DisplayEntry | undefined {

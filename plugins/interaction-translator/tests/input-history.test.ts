@@ -1,5 +1,5 @@
 import { expect, mock, test } from "claude-code/testing"
-import { prepareInput, takePreparedInput, discardPreparedInput, MAX_PREPARED_INPUTS, MAX_PREPARED_BYTES } from "../hooks/input-history"
+import { prepareInput, takePreparedInput, discardPreparedInput, hasPendingPreparedInputs, MAX_PREPARED_INPUTS, MAX_PREPARED_BYTES } from "../hooks/input-history"
 import type { EngineInterface } from "claude-code"
 
 function stateEngine() {
@@ -14,6 +14,18 @@ function stateEngine() {
     },
   } } as unknown as EngineInterface
 }
+
+test("queue inspection counts persisted handoffs until their stored row releases them", async () => {
+  const engine = stateEngine()
+  expect(await hasPendingPreparedInputs(engine)).toBe(false)
+  const prepared = await prepareInput(engine, "Original.", "Translated.", "en")
+  expect(prepared).toBeDefined()
+  expect(await hasPendingPreparedInputs(engine)).toBe(true)
+  await takePreparedInput(engine, ["Original."], "claimed-row")
+  expect(await hasPendingPreparedInputs(engine)).toBe(true)
+  if (prepared) await discardPreparedInput(engine, prepared.id)
+  expect(await hasPendingPreparedInputs(engine)).toBe(false)
+})
 
 test("composer history keeps the exact original while the model row receives the translation", async ($, on) => {
   mock.clock(on)

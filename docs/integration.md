@@ -20,7 +20,7 @@
 | Claude reply language | `claude_language` | `same-as-prompt` | Claude 正文回复语言，可单独指定；默认跟随提示词语言 |
 | Output language | `output_language` | `cn` | 最终输出语言；`same-as-claude` 跳过输出翻译 |
 | Output translation mode | `output_mode` | `display-only` | 界面译文不写入模型历史；`conversation` 兼容旧版自动翻译及历史改写 |
-| Display translation trigger | `output_trigger` | `manual` | 默认点击后翻译选中的文本块；`auto` 自动翻译新回复及选择面板，仅 `display-only` 生效 |
+| Display translation trigger | `output_trigger` | `manual` | `manual` 点击翻译；`final` 正常结束且无待交付追问时，只自动翻译最后答复；`auto` 自动翻译新回复及选择面板，仅 `display-only` 生效 |
 
 各语言支持 `cn / en / jp / fr`。默认链路为：中文输入 → 英文提示词 → Claude 英文回复 → 中文输出。中文输入、法文输出可仅修改 `output_language=fr`。输入语言为提示，翻译模型仍会处理混合语言。
 
@@ -31,6 +31,10 @@
 默认 `output_trigger=manual` 不发起输出翻译，等待正在生成的响应结束后才提供按钮。全屏界面可点击回复旁的“翻译”；普通终端在输入框上方按 `Ctrl+X`、`Tab` 聚焦，再按 `t`。`p / n` 或“上一条 / 下一条”切换待译文本块，上方短句标明目标。只有选中的文本块进入后台队列，界面绘制不等待后端。`auto` 保持自动翻译本次新追加回复的行为。
 
 摘要只翻译实际显示的摘要，不会拿完整回复替换它，也不会恢复被界面隐藏的内容。代码、路径和 URL 保持字面值；纯代码或代码边界不完整的可见块保留原文。重复重绘复用缓存；同语言或 `same-as-claude` 不提供输出翻译。
+
+`output_trigger=final` 保留上述手动入口，在主轮次正常完成时，只自动翻译原生最终答复对应的最后一条助手记录。等待选择、工具调用和过程输出不触发。最后一次请求必须正常结束且没有待执行工具；中断、截断和出错保留手动入口，子代理完成不会触发主轮自动翻译。
+
+普通输入框追问尚在输入翻译、排队或等待交付时，跳过前一轮自动翻译；所有追问交付并处理完后，才翻译最新最终答复。交付判断读取已有持久输入交接状态，不读取整段历史或猜测用户是否还会追问。已拒绝的追问不会推进“已接受输入”的版本。新追问取消尚未完成的旧自动显示任务；已启动的后端调用可能继续，但结果会被丢弃，所以无法保证翻译开始后再追问也只有一次后端请求。取消队列没有逐条通知，遗留交接状态会保守阻止自动翻译，手动入口始终可用；需先处理排队内容或重启会话。
 
 旧行为可通过 `output_mode=conversation` 显式选择。该模式仍缓冲完整主会话响应、保护跨 chunk 代码块，同时改写显示和 transcript；后续模型会读到译文。`claude -p` 在 `display-only` 下直接输出原始回复、没有输出翻译调用；需要无界面译文时使用 `conversation`。
 

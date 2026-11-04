@@ -8,6 +8,13 @@ export const MAX_PREPARED_INPUTS = 32
 export const MAX_PREPARED_BYTES = 2 * 1024 * 1024
 const encoder = new TextEncoder()
 
+// Include claimed rows until their successful storage releases the handoff.
+// Unconsumed entries survive hot reload and conservatively cover queued input.
+export async function hasPendingPreparedInputs($: EngineInterface): Promise<boolean> {
+  const state = await $.state.get(INPUTS)
+  return Boolean(state.value?.pending.length)
+}
+
 // Host session state survives hot reload, without writing prompt copies to disk.
 // update uses versioned writes so concurrent submissions cannot lose each other.
 export async function prepareInput($: EngineInterface, source: string, translated: string, target: string): Promise<PreparedInput | undefined> {

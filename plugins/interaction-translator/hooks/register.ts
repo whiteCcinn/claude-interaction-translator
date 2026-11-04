@@ -1,18 +1,20 @@
-import type { On, PluginOptions, TurnStepChunk, TurnStepResult } from "claude-code"
+import type { EngineInterface, On, PluginOptions, TurnStepChunk, TurnStepResult } from "claude-code"
 import { LANGUAGES, languageSettings, outputFailure, translationPrompt } from "./languages"
 import { protectText, restoreText } from "./protected-text"
 import { chunkBytes, failedOutputChunk, MAX_OUTPUT_BYTES, MAX_OUTPUT_CHUNKS, prepareOutput, rewriteOutput } from "./output-stream"
 import { clearFeedback, startFeedback, finishFeedback } from "./translation-feedback"
-import type { FeedbackState } from "./translation-feedback"
+import type { Feedback, FeedbackState } from "./translation-feedback"
 import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { assistantDisplayAllowed, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, hideDisplay, incompleteCode, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
+import { assistantDisplayAllowed, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
-import { clearPreparedInputs, discardPreparedInput, prepareInput, takePreparedInput } from "./input-history"
+import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
 import { canSkipInputTranslation } from "./input-language"
+import { beginFinalStep, beginFinalSubmission, clearFinalOutput, completeFinalOutput, createFinalOutputState, finishFinalStep, finishFinalSubmission, recordFinalResponse, recordFinalStart, refreshFinalOutput, takeFinalDisplay } from "./final-output"
+import type { FinalOutputState, FinalStep } from "./final-output"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -28,6 +30,7 @@ export function register(on: On, options: PluginOptions) {
   const feedback: FeedbackState = { interactive: false }
   const configuration: ConfigurationState = {}
   const display = createDisplayState(feedback)
+  const finalOutput = createFinalOutputState()
   const interruptedDrains = new Set<string>()
 
   on("command.run", { command: /^(?:plugin|config)$/ }, async ($, e, next) => {
@@ -42,6 +45,7 @@ export function register(on: On, options: PluginOptions) {
 
   on("session.start", async ($, e, next) => {
     clearDisplay(display)
+    clearFinalOutput(finalOutput)
     feedback.interactive = e.isInteractive
     if (!e.isInteractive && feedback.current) clearFeedback($, feedback)
     const result = await next(e)
@@ -55,14 +59,17 @@ export function register(on: On, options: PluginOptions) {
 
   on("command.run", { command: "resume" }, ($, e, next) => {
     clearDisplay(display)
+    clearFinalOutput(finalOutput)
     return next(e)
   })
 
   on("session.append", { door: "response" }, async ($, e, next) => {
     const epoch = display.epoch
+    const step = !e.agentId && finalDisplay(options) ? finalOutput.lastStep : undefined
     const stored = await next(e)
     if (!displayOnly(options) || epoch !== display.epoch || !stored.uuid || stored.message?.type !== "assistant") return stored
     recordFreshResponse(display, stored.uuid, stored.message.content.length)
+    recordFinalResponse(finalOutput, step, stored.uuid, stored.message.content)
     // A surface can draw the original before the row is stored. Redraw once
     // its identity is known; never infer freshness from rendered wording.
     if (feedback.interactive) {
@@ -73,9 +80,26 @@ export function register(on: On, options: PluginOptions) {
 
   on("session.end", async ($, e, next) => {
     clearDisplay(display)
+    clearFinalOutput(finalOutput)
     if (feedback.current) clearFeedback($, feedback)
     await clearPreparedInputs($)
     return next(e)
+  })
+
+  on("turn.start", (_, e, next) => {
+    if (finalDisplay(options) && !e.agentId) recordFinalStart(finalOutput, e.turnId)
+    return next(e)
+  })
+
+  on("turn.complete", async ($, e, next) => {
+    const step = finalDisplay(options) && !e.agentId ? finalOutput.steps.get(e.turnId) : undefined
+    const result = await next(e)
+    if (!step || !feedback.interactive || next.signal.aborted) return result
+    // Observe completion before an asynchronous queue read, allowing a failed
+    // concurrent submission to release this same candidate without a race.
+    completeFinalOutput(finalOutput, step, e, true)
+    await refreshFinalDisplay($, finalOutput, step)
+    return result
   })
 
   on("session.append", { door: "prompt" }, async ($, e, next) => {
@@ -160,6 +184,9 @@ export function register(on: On, options: PluginOptions) {
     }
     feedback.interactive = true
     const entry = displayEntry(display, e.surface, e.requestId, e.props.text, Boolean(e.props.isSummary), languages.output, "assistant", !manual)
+    if (entry && !display.activeSteps && takeFinalDisplay(finalOutput, options, e.surface, e.requestId, Boolean(e.props.isSummary)) && entry.phase === "idle") {
+      requestDisplay($, options, configuration, display, entry, languages.reply, languages.output, true)
+    }
     if (entry?.phase === "ready" && entry.translated !== undefined) return next({ ...e, props: { ...e.props, text: entry.translated } })
     scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
     if (entry?.phase === "idle") {
@@ -236,15 +263,19 @@ export function register(on: On, options: PluginOptions) {
       BYPASS.test(e.text)
     ) return next(e)
 
+    const finalSubmission = finalDisplay(options) && e.origin.kind === "composer" ? beginFinalSubmission(finalOutput) : undefined
+    if (finalDisplay(options) && e.origin.kind === "composer") cancelFinalDisplay(display)
+
     let translated: string | undefined
     let preparedId: number | undefined
+    let inputAccepted = false
     const leadingTag = /^[A-Z][A-Z0-9_-]{2,}:[ \t]*/.exec(e.text)?.[0] ?? ""
     const protectedText = protectText(e.text.slice(leadingTag.length))
     const skipTranslation = canSkipInputTranslation(e.text.slice(leadingTag.length), code)
     let errorHint = "请检查网络后重试。"
-    const current = !skipTranslation && e.origin.kind === "composer"
-      ? await startFeedback($, feedback, "input", languages.input, code, next.signal) : undefined
+    let current: Feedback | undefined
     try {
+      if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
       const result = skipTranslation ? { text: protectedText.text }
         : await requestTranslation($, options, configuration, translationPrompt(code, languages.input), protectedText.text, 1024, next.signal)
@@ -290,6 +321,7 @@ export function register(on: On, options: PluginOptions) {
         text: e.origin.kind === "composer" ? e.text : translated,
         context: [...(e.context ?? []), `Reply in natural ${LANGUAGES[languages.reply].name}. Keep commands, paths, URLs, identifiers, and product names unchanged.`],
       })
+      inputAccepted = accepted.drop === undefined
       if (accepted.drop && preparedId !== undefined) await discardPreparedInput($, preparedId)
       return accepted
     } catch {
@@ -299,6 +331,9 @@ export function register(on: On, options: PluginOptions) {
       translated = undefined
       return { drop: FAILURE }
     } finally {
+      const released = finishFinalSubmission(finalOutput, finalSubmission, inputAccepted)
+      const deferred = finalOutput.lastStep
+      if (released && !inputAccepted && deferred?.complete && feedback.interactive && !next.signal.aborted) await refreshFinalDisplay($, finalOutput, deferred)
       await finishFeedback($, feedback, current, Boolean(translated), translated ?? errorHint)
     }
   }).catch((_, e, next) => {
@@ -307,8 +342,14 @@ export function register(on: On, options: PluginOptions) {
 
   on("turn.step", async function* ($, e, next) {
     if (displayOnly(options)) {
+      const step = finalDisplay(options) ? beginFinalStep(finalOutput, e) : undefined
+      if (finalDisplay(options) && !e.agentId) cancelFinalDisplay(display)
       display.activeSteps += 1
-      try { return yield* next(e) }
+      try {
+        const result = yield* next(e)
+        finishFinalStep(finalOutput, step, result)
+        return result
+      }
       finally {
         display.activeSteps -= 1
         if (feedback.interactive) $.ui.invalidate("ui.render")
@@ -411,4 +452,13 @@ export function register(on: On, options: PluginOptions) {
     }
     return { turnId: e.turnId, index: e.index, answer: text, toolUses: [], stopReason: "end_turn", usage: null }
   })
+}
+
+async function refreshFinalDisplay($: EngineInterface, state: FinalOutputState, step: FinalStep) {
+  let queued = true
+  try { queued = await hasPendingPreparedInputs($) } catch { /* Unknown queue state retains manual controls. */ }
+  refreshFinalOutput(state, step, queued)
+  if (state.selected?.step === step) {
+    try { $.ui.invalidate("ui.render") } catch { /* A later render can use the same current completion admission. */ }
+  }
 }

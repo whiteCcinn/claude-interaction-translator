@@ -82,7 +82,7 @@ claude plugin list
 | Claude reply language | `claude_language` | `same-as-prompt`；默认要求英文回复 |
 | Output language | `output_language` | `cn`；你在界面读到的语言 |
 | Output translation mode | `output_mode` | `display-only`；界面译文与模型历史分离 |
-| Display translation trigger | `output_trigger` | `manual`；点击翻译，改为 `auto` 可自动翻译新回复；仅 `display-only` 生效 |
+| Display translation trigger | `output_trigger` | `manual` 点击翻译（默认）；`final` 只自动翻译本轮最后答复；`auto` 自动翻译新回复；仅 `display-only` 生效 |
 
 语言代码：`cn` 简体中文、`en` 英文、`jp` 日文、`fr` 法文。例如中文输入、日文输出，只需把 Output language 改为 `jp`。选择 `same-as-claude`，或将回复语言和输出语言设为相同值，可跳过输出翻译。
 
@@ -133,13 +133,17 @@ claude plugin install interaction-translator@claude-interaction-translator \
 
 全屏界面可以直接点击回复旁的“翻译”。普通终端使用输入框上方的“翻译回复”：按 `Ctrl+X` 后按 `Tab` 聚焦按钮，再按 `t`；有多条待译回复时，用“上一条 / 下一条”（`p / n`）选择，上方短句显示本次目标。插件不会翻译整段聊天记录。需要恢复自动翻译时，在配置里将 **Display translation trigger** 改为 `auto`。
 
+选择 **`final`** 可以在本轮任务正常结束时，只自动翻译最后一条助手答复，过程输出和选择面板仍手动翻译。运行中继续追问时，只要追问还在翻译、排队或等待交付，就先不自动翻译中间答复；等追问都处理完，再翻译最新的最终答复。依照原生结束事件判断，不以停顿或超时猜测。中断、报错、截断、子代理结束、恢复的历史不会触发这项自动翻译。
+
+新追问会撤销旧答复尚未完成的自动翻译；已经发给后端的请求可能继续运行，但过期结果不会替换正文。因此，若追问发生在翻译已经启动后，后端可能收到两次请求。宿主没有逐条通知排队消息被取消的接口；取消后若交付状态仍有遗留，插件会保守保留手动入口，需先处理排队内容或重启会话。
+
 输入框中按 ↑ / ↓ 回看历史时，会保留你输入时的原文；Claude 收到的正文仍是译文。排队输入和正常插件热重载也保留这一行为。之前已经存成译文的历史不会自动恢复。
 
 输入翻译前会在本地检查正文语言。能明确判断输入已是目标提示词语言时，直接保留原文，不调用翻译 API 或 Codex，也不显示输入翻译进度。例如目标为英文时，英文输入可以直接发送；Claude 的回复语言仍按配置执行。代码、路径和 URL 不参与语言判断；混合语言、判断不确定或超过本地检测范围的输入继续走正常翻译。
 
 | 模式 | 交互界面 | 模型历史 | `claude -p` |
 | --- | --- | --- | --- |
-| `display-only`（默认） | 默认保留原文，点击后翻译；`auto` 自动翻译新回复 | 保留 Claude 原始回复，默认英文 | 输出原始回复，不调用输出翻译 |
+| `display-only`（默认） | `manual` 点击翻译；`final` 只自动翻译最后答复；`auto` 自动翻译新回复 | 保留 Claude 原始回复，默认英文 | 输出原始回复，不调用输出翻译 |
 | `conversation` | 显示译文 | 写入译文，后续模型会读到译文 | 输出译文 |
 
 回复语言通过指令引导；保留原始回复并不保证模型生成的每个字符都是英文。显示翻译不改写已保存的会话内容，验证显示模式时建议使用新会话。

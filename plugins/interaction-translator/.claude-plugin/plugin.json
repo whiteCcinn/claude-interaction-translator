@@ -1,6 +1,6 @@
 {
   "name": "interaction-translator",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "types": "./types/index.d.ts",
   "description": "Translate prompts and Claude replies with independent input and output languages using an API or local Codex CLI.",
   "author": {
@@ -58,8 +58,8 @@
     "output_trigger": {
       "type": "string",
       "title": "Display translation trigger",
-      "description": "manual 默认保留原文，点击按钮后翻译回复或选择面板；auto 自动翻译新回复和选择面板。仅 display-only 生效，conversation 保持自动翻译。",
-      "options": ["manual", "auto"],
+      "description": "manual 默认按按钮翻译；final 在本轮任务正常结束且没有排队追问时，只自动翻译最后一条助手答复，过程输出和选择面板仍手动；auto 自动翻译新回复和选择面板。仅 display-only 生效，conversation 保持自动翻译。",
+      "options": ["manual", "final", "auto"],
       "default": "manual"
     },
     "codex_path_selection": {

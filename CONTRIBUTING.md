@@ -2,6 +2,10 @@
 
 The plugin runs inside Claude Code. There is no npm runtime dependency or separate translation server. The optional `codex-cli` backend requires a locally installed and authenticated Codex CLI; API remains the default backend.
 
+The optional `output_trigger=final` keeps process output manual and automatically translates only the last stored visible assistant response of a normally completed main turn. Keep lifecycle ownership in `hooks/final-output.ts`: observe main starts, snapshot the actual main step at response-append entry, retain that step across generator finalization for late native flushes, and authorize exact raw/block UUIDs only at `turn.complete`. A new main step must retire old ownership even when its own start was unobserved. Never use text-prefix/last-rendered/inactivity heuristics or read full history. Subagents, interrupted/truncated/error completions and unobserved starts fail closed to manual.
+
+For final mode followups, bounded identity tokens cover in-flight composer submissions; commit their monotonic accepted revision only after acceptance, so rejected submissions cannot supersede a running task. Read persistent `preparedInputs.pending`, including claimed entries until successful storage/discard, before final admission. This covers multiple queued prompts and hot reload without a second queue ledger. An unknown/read-failing/cancelled handoff stays conservative. New input or a new main step cancels pending/running automatic final entries without freeing an in-flight slot before settlement; stale results must fail identity/abort checks. Keep manual/auto/conversation behavior, headless passthrough and manual retries intact.
+
 Use Claude Code 2.1.316 for the current bidirectional translation validation baseline:
 
 ```bash
