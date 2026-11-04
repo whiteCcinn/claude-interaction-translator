@@ -12,6 +12,7 @@ import { assistantDisplayAllowed, clearDisplay, closeQuestionDisplay, createDisp
 import { parseQuestions, questionSource } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
+import { canSkipInputTranslation } from "./input-language"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -204,12 +205,14 @@ export function register(on: On, options: PluginOptions) {
     let preparedId: number | undefined
     const leadingTag = /^[A-Z][A-Z0-9_-]{2,}:[ \t]*/.exec(e.text)?.[0] ?? ""
     const protectedText = protectText(e.text.slice(leadingTag.length))
+    const skipTranslation = canSkipInputTranslation(e.text.slice(leadingTag.length), code)
     let errorHint = "请检查网络后重试。"
-    const current = e.origin.kind === "composer"
+    const current = !skipTranslation && e.origin.kind === "composer"
       ? await startFeedback($, feedback, "input", languages.input, code, next.signal) : undefined
     try {
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
-      const result = await requestTranslation($, options, configuration, translationPrompt(code, languages.input), protectedText.text, 1024, next.signal)
+      const result = skipTranslation ? { text: protectedText.text }
+        : await requestTranslation($, options, configuration, translationPrompt(code, languages.input), protectedText.text, 1024, next.signal)
       if ("drop" in result) {
         errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置（超时 120 秒）。" : errorHint)
         return { drop: result.drop }

@@ -101,10 +101,12 @@ test("passes commands and empty prompts without a translation request", async ($
   }
 })
 
-test("routes Chinese, Japanese, French, and English input through the translator", async ($, on) => {
+test("translates foreign input and bypasses already-English input", async ($, on) => {
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
+  let calls = 0
   on("http.fetch", (_, e) => {
+    calls += 1
     const request = JSON.parse(e.init?.body ?? "{}")
     expect(request.messages[0].content).toContain("Detect the input language")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: "Change the button." } }] }) } }
@@ -115,6 +117,7 @@ test("routes Chinese, Japanese, French, and English input through the translator
     expect(result.text).toBe("Change the button.")
     expect(result.context?.[0]).toContain("Reply in natural English")
   }
+  expect(calls).toBe(3)
 })
 
 test("stops a prompt when no token is configured", async ($, on) => {

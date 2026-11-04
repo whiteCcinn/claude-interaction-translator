@@ -132,6 +132,8 @@ After installation and configuration, run `claude` as usual and send a normal qu
 
 Up/Down input recall keeps the exact original you typed, while Claude still receives the translated prompt. This also applies to queued input and normal plugin hot reloads. Previously rewritten history entries are not restored.
 
+Before input translation, a local check examines the natural-language instructions. Confident matches to the prompt language pass through unchanged, without a translation API/Codex call or input progress card. For example, English input can go directly to an English prompt target; Claude's reply language still follows its separate setting. Code, paths and URLs do not influence detection. Mixed, uncertain or oversized input keeps the normal translation path.
+
 | Mode | Interactive UI | Model history | `claude -p` |
 | --- | --- | --- | --- |
 | `display-only` (default) | Original text until its complete translation replaces it | Claude's original reply, English by default | Original reply; no output translation call |
