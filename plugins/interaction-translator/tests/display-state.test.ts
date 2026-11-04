@@ -1,6 +1,82 @@
 import { expect, test } from "claude-code/testing"
 import { createDisplayState, displayEntry, clearDisplay, incompleteCode, MAX_DISPLAY_ENTRIES, MAX_DISPLAY_BYTES, MAX_DISPLAY_SOURCE_BYTES } from "../hooks/display-translation"
-import { assistantDisplayAllowed, recordFreshResponse } from "../hooks/display-translation"
+import { assistantDisplayAllowed, recordFreshResponse, manualDisplay, manualDisplayTarget, requestDisplay, MAX_DISPLAY_PENDING, closeQuestionDisplay } from "../hooks/display-translation"
+import type { EngineInterface } from "claude-code"
+
+const manualEngine = () => {
+  let scheduled = 0
+  const engine = { clock: { after() { scheduled += 1; return { cancel() {} } } }, ui: { invalidate() {} } } as unknown as EngineInterface
+  return { engine, scheduled: () => scheduled }
+}
+
+test("manual is the default display trigger and conversation remains automatic", () => {
+  expect(manualDisplay({})).toBe(true)
+  expect(manualDisplay({ output_mode: "display-only", output_trigger: "auto" })).toBe(false)
+  expect(manualDisplay({ output_mode: "conversation", output_trigger: "manual" })).toBe(false)
+})
+
+test("idle history stays bounded without pinning out the latest manual control", () => {
+  const state = createDisplayState()
+  const first = displayEntry(state, "terminal", "oldest", "Old history.", false, "cn", "assistant", false)
+  for (let i = 0; i < MAX_DISPLAY_ENTRIES + 10; i++) displayEntry(state, "terminal", String(i), `Reply ${i}.`, false, "cn", "assistant", false)
+  expect(state.entries.size).toBe(MAX_DISPLAY_ENTRIES)
+  expect(state.pending.size).toBe(0)
+  expect(state.running.size).toBe(0)
+  expect(first?.controller.signal.aborted).toBe(true)
+  expect(manualDisplayTarget(state, "terminal")?.requestId).toBe(String(MAX_DISPLAY_ENTRIES + 9))
+})
+
+test("completed manual translations can make room for a new explicit control", () => {
+  const state = createDisplayState()
+  for (let i = 0; i < MAX_DISPLAY_ENTRIES; i++) {
+    const entry = displayEntry(state, "terminal", String(i), `Reply ${i}.`, false, "cn", "assistant", false)!
+    entry.phase = "ready"
+    entry.translated = "译文。"
+  }
+  expect(displayEntry(state, "terminal", "latest", "Latest reply.", false, "cn", "assistant", false)?.phase).toBe("idle")
+  expect(state.entries.size).toBe(MAX_DISPLAY_ENTRIES)
+  expect(state.pending.size).toBe(0)
+})
+
+test("explicit requests queue once and reject stale, hidden and cleared actions", () => {
+  const state = createDisplayState()
+  const { engine, scheduled } = manualEngine()
+  const old = displayEntry(state, "terminal", "row", "Before edit.", false, "cn", "assistant", false)!
+  const current = displayEntry(state, "terminal", "row", "After edit.", false, "cn", "assistant", false)!
+  requestDisplay(engine, {}, {}, state, old, "en", "cn")
+  expect(state.pending.size).toBe(0)
+  current.visible = false
+  requestDisplay(engine, {}, {}, state, current, "en", "cn")
+  expect(state.pending.size).toBe(0)
+  current.visible = true
+  requestDisplay(engine, {}, {}, state, current, "en", "cn")
+  requestDisplay(engine, {}, {}, state, current, "en", "cn")
+  expect(state.pending.size).toBe(1)
+  expect(scheduled()).toBe(1)
+  clearDisplay(state)
+  requestDisplay(engine, {}, {}, state, current, "en", "cn")
+  expect(state.pending.size).toBe(0)
+})
+
+test("manual question discovery does not evict queued work and queue pressure is retryable", () => {
+  const state = createDisplayState()
+  const { engine } = manualEngine()
+  for (let i = 0; i < MAX_DISPLAY_PENDING; i++) displayEntry(state, "terminal", String(i), `Reply ${i}.`, false, "cn")
+  const question = displayEntry(state, "terminal", "dialog", "[]", false, "cn", "question", false)!
+  expect(question.phase).toBe("idle")
+  expect(state.pending.size).toBe(MAX_DISPLAY_PENDING)
+  requestDisplay(engine, {}, {}, state, question, "en", "cn")
+  expect(question.phase).toBe("error")
+  expect(question.failure).toBe("queue")
+  state.pending.clear()
+  requestDisplay(engine, {}, {}, state, question, "en", "cn")
+  expect(question.phase).toBe("pending")
+  expect(question.failure).toBe(undefined)
+  expect(state.pending.size).toBe(1)
+  closeQuestionDisplay(state, "dialog")
+  requestDisplay(engine, {}, {}, state, question, "en", "cn")
+  expect(state.pending.size).toBe(0)
+})
 
 test("native assistant block zero uses the recorded response UUID with its block suffix", () => {
   const state = createDisplayState()

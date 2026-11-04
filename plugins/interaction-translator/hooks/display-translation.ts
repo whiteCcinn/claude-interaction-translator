@@ -18,11 +18,14 @@ const encoder = new TextEncoder()
 
 export type DisplayEntry = {
   key: string
+  surface: RenderSurface
+  manual: boolean
   kind: "assistant" | "question"
   requestId: string
   source: string
   bytes: number
-  phase: "pending" | "loading" | "ready" | "error"
+  phase: "idle" | "pending" | "loading" | "ready" | "error"
+  failure?: "queue"
   visible: boolean
   translated?: string
   controller: AbortController
@@ -37,12 +40,13 @@ export type DisplayState = {
   epoch: number
   freshResponses: Set<string>
   closedQuestions: Set<string>
+  manualAssistants: Map<RenderSurface, DisplayEntry>
   scheduled?: Scheduled
   feedback?: FeedbackState
 }
 
 export function createDisplayState(feedback?: FeedbackState): DisplayState {
-  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, epoch: 0, freshResponses: new Set(), closedQuestions: new Set(), feedback }
+  return { entries: new Map(), pending: new Map(), running: new Set(), bytes: 0, activeSteps: 0, epoch: 0, freshResponses: new Set(), closedQuestions: new Set(), manualAssistants: new Map(), feedback }
 }
 
 export function recordFreshResponse(state: DisplayState, requestId: string, blockCount = 1) {
@@ -69,6 +73,7 @@ export function assistantDisplayAllowed(state: DisplayState, surface: RenderSurf
 }
 
 export function displayOnly(options: PluginOptions): boolean { return options.output_mode !== "conversation" }
+export function manualDisplay(options: PluginOptions): boolean { return displayOnly(options) && options.output_trigger !== "auto" }
 export function displaySourceAllowed(text: string): boolean { return encoder.encode(text).byteLength <= MAX_DISPLAY_SOURCE_BYTES }
 
 export function displayCodeOnly(text: string): boolean {
@@ -99,18 +104,21 @@ function removeEntry(state: DisplayState, entry: DisplayEntry) {
   state.pending.delete(entry.key)
   if (state.entries.get(entry.key) !== entry) return
   state.entries.delete(entry.key)
+  if (state.manualAssistants.get(entry.surface) === entry) state.manualAssistants.delete(entry.surface)
   state.bytes -= entry.bytes
 }
 
 function makeRoom(state: DisplayState, additional: number, count: number, keep?: DisplayEntry): boolean {
   for (const entry of state.entries.values()) {
     if (state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES) break
-    if (entry !== keep && !entry.visible && !state.running.has(entry) && entry.phase !== "pending") removeEntry(state, entry)
+    // Manual entries can be recreated without a backend call. Pinning every
+    // restored or completed row would hide controls for newer replies forever.
+    if (entry !== keep && (entry.manual || !entry.visible) && !state.running.has(entry) && entry.phase !== "pending" && entry.phase !== "loading") removeEntry(state, entry)
   }
   return state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES
 }
 
-export function displayEntry(state: DisplayState, surface: RenderSurface, requestId: string, source: string, summary: boolean, target: Language, kind: DisplayEntry["kind"] = "assistant"): DisplayEntry | undefined {
+export function displayEntry(state: DisplayState, surface: RenderSurface, requestId: string, source: string, summary: boolean, target: Language, kind: DisplayEntry["kind"] = "assistant", autoStart = true): DisplayEntry | undefined {
   if (kind === "question" && state.closedQuestions.has(requestId)) return undefined
   const key = JSON.stringify([surface, requestId, summary, target, kind])
   const previous = state.entries.get(key)
@@ -124,14 +132,15 @@ export function displayEntry(state: DisplayState, surface: RenderSurface, reques
   if (previous) removeEntry(state, previous)
   const bytes = encoder.encode(source).byteLength
   if (bytes > MAX_DISPLAY_SOURCE_BYTES) return undefined
-  if (state.pending.size >= MAX_DISPLAY_PENDING && kind === "question") {
+  if (autoStart && state.pending.size >= MAX_DISPLAY_PENDING && kind === "question") {
     const queued = Array.from(state.pending.values()).findLast(entry => entry.kind === "assistant")
     if (queued) removeEntry(state, queued)
   }
-  if (state.pending.size >= MAX_DISPLAY_PENDING || !makeRoom(state, bytes, 1)) return undefined
-  const entry: DisplayEntry = { key, kind, requestId, source, bytes, phase: "pending", visible: true, controller: new AbortController() }
+  if ((autoStart && state.pending.size >= MAX_DISPLAY_PENDING) || !makeRoom(state, bytes, 1)) return undefined
+  const entry: DisplayEntry = { key, surface, manual: !autoStart, kind, requestId, source, bytes, phase: autoStart ? "pending" : "idle", visible: true, controller: new AbortController() }
   state.entries.set(key, entry)
-  state.pending.set(key, entry)
+  if (autoStart) state.pending.set(key, entry)
+  else if (kind === "assistant") state.manualAssistants.set(surface, entry)
   state.bytes += bytes
   return entry
 }
@@ -152,6 +161,7 @@ export function clearDisplay(state: DisplayState) {
   for (const entry of state.entries.values()) entry.controller.abort()
   for (const entry of state.running) entry.controller.abort()
   state.entries.clear()
+  state.manualAssistants.clear()
   state.pending.clear()
   state.bytes = 0
 }
@@ -232,12 +242,52 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
 }
 
 export function retryDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language) {
-  if (state.entries.get(entry.key) !== entry || entry.phase !== "error" || state.pending.size >= MAX_DISPLAY_PENDING) return
+  if (entry.phase !== "error") return
+  requestDisplay($, options, configuration, state, entry, source, target)
+}
+
+export function requestDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language) {
+  if (state.entries.get(entry.key) !== entry || !entry.visible || (entry.phase !== "idle" && entry.phase !== "error") || (entry.kind === "assistant" && state.activeSteps)) return
+  if (state.pending.size >= MAX_DISPLAY_PENDING) {
+    entry.phase = "error"
+    entry.failure = "queue"
+    $.ui.invalidate("ui.render")
+    return
+  }
   entry.controller = new AbortController()
+  entry.failure = undefined
   entry.phase = "pending"
   state.pending.set(entry.key, entry)
   scheduleDisplay($, options, configuration, state, source, target)
   $.ui.invalidate("ui.render")
+}
+
+export function manualDisplayTarget(state: DisplayState, surface: RenderSurface): DisplayEntry | undefined {
+  const choices = manualDisplayChoices(state, surface)
+  return choices.find(entry => entry.kind === "question") ?? choices.find(entry => entry === state.manualAssistants.get(surface)) ?? choices.at(-1)
+}
+
+export function manualDisplayChoices(state: DisplayState, surface: RenderSurface): DisplayEntry[] {
+  return Array.from(state.entries.values()).filter(entry => entry.surface === surface && entry.visible && (entry.phase === "idle" || entry.phase === "error") && (!state.activeSteps || entry.kind === "question"))
+}
+
+export function selectManualDisplay($: EngineInterface, state: DisplayState, surface: RenderSurface, direction: number) {
+  const choices = manualDisplayChoices(state, surface).filter(entry => entry.kind === "assistant")
+  if (!choices.length) return
+  const current = manualDisplayTarget(state, surface)
+  const index = Math.max(0, choices.findIndex(entry => entry === current))
+  const selected = choices[(index + direction + choices.length) % choices.length]
+  if (selected) state.manualAssistants.set(surface, selected)
+  $.ui.invalidate("ui.render")
+}
+
+export function displayQueueFailure(target: Language): string {
+  return {
+    cn: "翻译等待队列已满，已保留原文。请稍后重试。",
+    en: "Translation queue is full. The original remains displayed; retry shortly.",
+    jp: "翻訳の待機キューが満杯です。原文を表示しています。後で再試行してください。",
+    fr: "La file de traduction est pleine. Le texte original reste affiché ; réessayez plus tard.",
+  }[target]
 }
 
 export function displayFailure(target: Language): string {

@@ -7,7 +7,7 @@ const step = { turnId: "display-only", index: 0, model: "claude-test", messageCo
 const stop: TurnStepChunk = { kind: "stop", stopReason: "end_turn", usage: null }
 
 for (const backend of ["api", "codex-cli"]) {
-  test(`${backend} keeps the native original until its complete display translation is ready`, { options: { backend, claude_language: "fr" } }, async ($, on) => {
+  test(`${backend} keeps the native original until its complete display translation is ready`, { options: { output_trigger: "auto", backend, claude_language: "fr" } }, async ($, on) => {
     const clock = mock.clock(on)
     on("config.list", () => ({ value: [] }))
     on("env.get", () => ({ value: "example-token" }))
@@ -44,7 +44,7 @@ for (const backend of ["api", "codex-cli"]) {
   })
 }
 
-test("display-only leaves headless response chunks and result in the original language", { options: { backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
+test("display-only leaves headless response chunks and result in the original language", { options: { output_trigger: "auto", backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
   on("config.list", () => ({ value: [] }))
   let calls = 0
   on("process.run", () => {
@@ -69,7 +69,7 @@ test("display-only leaves headless response chunks and result in the original la
   expect(calls).toBe(0)
 })
 
-test("display-only translates a newly appended visible assistant row without rewriting its source", { options: { backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
+test("display-only translates a newly appended visible assistant row without rewriting its source", { options: { output_trigger: "auto", backend: "codex-cli", output_mode: "display-only" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("session.start", (_, e) => ({ cwd: e.cwd }))
@@ -90,7 +90,7 @@ test("display-only translates a newly appended visible assistant row without rew
   await ui.unmount()
 })
 
-test("repaints and resize do not repeat a completed visible translation", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("repaints and resize do not repeat a completed visible translation", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
@@ -106,7 +106,7 @@ test("repaints and resize do not repeat a completed visible translation", { opti
   await ui.unmount()
 })
 
-test("source updates discard stale translation completions", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("source updates discard stale translation completions", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   const seen: string[] = []
@@ -132,7 +132,7 @@ test("source updates discard stale translation completions", { options: { backen
   await ui.unmount()
 })
 
-test("summary translation uses only the exact visible summary and keeps readonly metadata", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("summary translation uses only the exact visible summary and keeps readonly metadata", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("process.run", (_, e) => {
@@ -151,7 +151,7 @@ test("summary translation uses only the exact visible summary and keeps readonly
   await ui.unmount()
 })
 
-test("failure and retry retain the original until the retry succeeds", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("failure and retry retain the original until the retry succeeds", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
@@ -181,7 +181,7 @@ test("failure and retry retain the original until the retry succeeds", { options
   await ui.unmount()
 })
 
-test("offscreen rows and incomplete code units never start background translation", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("offscreen rows and incomplete code units never start background translation", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   let calls = 0
   on("config.list", () => ({ value: [] }))
@@ -201,7 +201,7 @@ test("offscreen rows and incomplete code units never start background translatio
   expect(calls).toBe(0)
 })
 
-test("code-only visible blocks are preserved without a translation request", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("code-only visible blocks are preserved without a translation request", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
@@ -215,7 +215,7 @@ test("code-only visible blocks are preserved without a translation request", { o
   await ui.unmount()
 })
 
-test("visible display translation keeps the output progress card", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("visible display translation keeps the output progress card", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("session.start", (_, e) => ({ cwd: e.cwd }))
@@ -238,7 +238,7 @@ test("visible display translation keeps the output progress card", { options: { 
   await progress.unmount()
 })
 
-test("all active steps must settle before visible text translation starts", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("all active steps must settle before visible text translation starts", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
@@ -265,7 +265,7 @@ test("all active steps must settle before visible text translation starts", { op
   await ui.unmount()
 })
 
-test("queue pressure and oversized sources preserve native originals", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("queue pressure and oversized sources preserve native originals", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("session.end", (_, e) => ({ sessionId: e.sessionId }))
@@ -296,7 +296,7 @@ test("queue pressure and oversized sources preserve native originals", { options
   expect(calls).toBe(0)
 })
 
-test("display failure progress accurately reports the retained original", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("display failure progress accurately reports the retained original", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("process.run", () => ({ value: { exitCode: 1, stdout: "", stderr: "private diagnostics", isStdoutTruncated: false, isStderrTruncated: false } }))
@@ -342,7 +342,7 @@ test("display-only does not replace oversized source streams", async ($, on) => 
   expect(chunks).toEqual([{ kind: "text", index: 0, text }, stop])
 })
 
-test("leaving the viewport before scheduling cancels queued display work", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("leaving the viewport before scheduling cancels queued display work", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
   const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Hello.", isFirstOfReply: true } })
@@ -352,7 +352,7 @@ test("leaving the viewport before scheduling cancels queued display work", { opt
   await ui.unmount()
 })
 
-test("clearing a visible row before scheduling cancels its obsolete translation", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("clearing a visible row before scheduling cancels its obsolete translation", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let calls = 0
@@ -366,7 +366,7 @@ test("clearing a visible row before scheduling cancels its obsolete translation"
   await ui.unmount()
 })
 
-test("an offscreen attached surface cannot cancel the terminal's visible translation", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("an offscreen attached surface cannot cancel the terminal's visible translation", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   const sources: string[] = []
@@ -386,7 +386,7 @@ test("an offscreen attached surface cannot cancel the terminal's visible transla
   await terminal.unmount()
 })
 
-test("attached surfaces keep their exact visible text and translations independent", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("attached surfaces keep their exact visible text and translations independent", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   const sources: string[] = []
@@ -406,7 +406,7 @@ test("attached surfaces keep their exact visible text and translations independe
   await terminal.unmount()
 })
 
-test("display translation runs at most two backend calls concurrently", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("display translation runs at most two backend calls concurrently", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   let active = 0
@@ -435,7 +435,7 @@ test("display translation runs at most two backend calls concurrently", { option
   }
 })
 
-test("session clear drops queued work and ignores late results from the previous session", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("session clear drops queued work and ignores late results from the previous session", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("session.end", (_, e) => ({ sessionId: e.sessionId }))

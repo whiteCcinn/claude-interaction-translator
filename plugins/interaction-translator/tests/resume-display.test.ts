@@ -1,7 +1,7 @@
 import { expect, mock, test } from "claude-code/testing"
 
 for (const backend of ["api", "codex-cli"]) {
-  test(`${backend} leaves restored history original while translating newly appended replies`, { options: { backend } }, async ($, on) => {
+  test(`${backend} leaves restored history original while translating newly appended replies`, { options: { output_trigger: "auto", backend } }, async ($, on) => {
     const clock = mock.clock(on)
     on("config.list", () => ({ value: [] }))
     on("env.get", () => ({ value: "test-token" }))
@@ -31,7 +31,7 @@ for (const backend of ["api", "codex-cli"]) {
   })
 }
 
-test("history rendered after plugin reload does not translate without a fresh response append", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("history rendered after plugin reload does not translate without a fresh response append", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   let calls = 0
   on("config.list", () => ({ value: [] }))
@@ -45,7 +45,7 @@ test("history rendered after plugin reload does not translate without a fresh re
 })
 
 for (const boundary of ["resume", "session.start"]) {
-  test(`${boundary} retires earlier response identities and cached translations`, { options: { backend: "codex-cli" } }, async ($, on) => {
+  test(`${boundary} retires earlier response identities and cached translations`, { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
     const clock = mock.clock(on)
     let calls = 0
     on("config.list", () => ({ value: [] }))
@@ -70,7 +70,7 @@ for (const boundary of ["resume", "session.start"]) {
   })
 }
 
-test("a reply drawn before append becomes eligible after it is stored", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("a reply drawn before append becomes eligible after it is stored", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   let calls = 0
   on("config.list", () => ({ value: [] }))
@@ -89,7 +89,7 @@ test("a reply drawn before append becomes eligible after it is stored", { option
   await row.unmount()
 })
 
-test("a response append completing after session clear cannot revive old display work", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("a response append completing after session clear cannot revive old display work", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   let calls = 0
   on("config.list", () => ({ value: [] }))
@@ -109,7 +109,7 @@ test("a response append completing after session clear cannot revive old display
   await row.unmount()
 })
 
-test("a fresh thinking summary translates only its visible summary text", { options: { backend: "codex-cli" } }, async ($, on) => {
+test("a fresh thinking summary translates only its visible summary text", { options: { output_trigger: "auto", backend: "codex-cli" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))
   const sources: string[] = []

@@ -8,7 +8,7 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { assistantDisplayAllowed, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displaySourceAllowed, hideDisplay, incompleteCode, recordFreshResponse, retryDisplay, scheduleDisplay } from "./display-translation"
+import { assistantDisplayAllowed, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, hideDisplay, incompleteCode, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
@@ -40,11 +40,17 @@ export function register(on: On, options: PluginOptions) {
     return warning ? { ...result, text: [warning, result.text].filter(Boolean).join("\n") } : result
   })
 
-  on("session.start", ($, e, next) => {
+  on("session.start", async ($, e, next) => {
     clearDisplay(display)
     feedback.interactive = e.isInteractive
     if (!e.isInteractive && feedback.current) clearFeedback($, feedback)
-    return next(e)
+    const result = await next(e)
+    // Native resume may mount history before raising session.start. Replace
+    // those pre-clear button closures with current entries after the reset.
+    if (manualDisplay(options) && e.isInteractive) {
+      try { $.ui.invalidate("ui.render") } catch { /* A later attachment will draw its own current controls. */ }
+    }
+    return result
   })
 
   on("command.run", { command: "resume" }, ($, e, next) => {
@@ -123,38 +129,51 @@ export function register(on: On, options: PluginOptions) {
     const source = questionSource(e.props.questions)
     if (source === undefined || !displaySourceAllowed(source)) return next(e)
     feedback.interactive = true
-    const entry = displayEntry(display, e.surface, e.requestId, source, false, languages.output, "question")
+    const manual = manualDisplay(options)
+    const entry = displayEntry(display, e.surface, e.requestId, source, false, languages.output, "question", !manual)
     if (entry?.phase === "ready" && entry.translated !== undefined) {
       const questions = parseQuestions(entry.translated)
       if (questions) return next({ ...e, props: { ...e.props, questions } })
     }
     scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
-    if (entry?.phase !== "error") return next(e)
+    if (entry?.phase !== "error" && entry?.phase !== "idle") return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
+    if (manual && e.surface === "terminal" && e.viewport?.isFullscreen === false) return Box({ flexDirection: "column", children: [
+      Text({ dimColor: true, children: ["普通终端的选择面板不支持点按翻译。可切换全屏，或在配置中将 Display translation trigger 设为 auto。"] }),
+      await next(e),
+    ] })
     return Box({ flexDirection: "column", children: [
-      Text({ color: "red", wrap: "truncate-end", children: [displayFailure(languages.output)] }),
-      Button({ key: "retry-question-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
-        onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
+      ...(entry.phase === "error" ? [Text({ color: "red", wrap: "truncate-end", children: [entry.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output)] })] : []),
+      Button({ key: entry.phase === "error" ? "retry-question-translation" : "translate-question", label: entry.phase === "error" ? "重试翻译 / Retry" : "翻译问题 / Translate",
+        onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
       await next(e),
     ] })
   })
 
   on("ui.render", { component: "AssistantMessage" }, async ($, e, next) => {
     if (!displayOnly(options) || languages.reply === languages.output) return next(e)
-    if (!assistantDisplayAllowed(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)) return next(e)
+    const manual = manualDisplay(options)
+    if (!manual && !assistantDisplayAllowed(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)) return next(e)
     if (!e.props.text.trim() || e.props.onScreen === null || (displaySourceAllowed(e.props.text) && (incompleteCode(e.props.text) || displayCodeOnly(e.props.text)))) {
       hideDisplay(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)
       return next(e)
     }
     feedback.interactive = true
-    const entry = displayEntry(display, e.surface, e.requestId, e.props.text, Boolean(e.props.isSummary), languages.output)
+    const entry = displayEntry(display, e.surface, e.requestId, e.props.text, Boolean(e.props.isSummary), languages.output, "assistant", !manual)
     if (entry?.phase === "ready" && entry.translated !== undefined) return next({ ...e, props: { ...e.props, text: entry.translated } })
     scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
+    if (entry?.phase === "idle") {
+      if (display.activeSteps || (e.surface === "terminal" && e.viewport?.isFullscreen === false)) return next(e)
+      const { Box, Button } = $.ui.resolve(e)
+      return Box({ flexDirection: "column", children: [await next(e), Button({ key: "translate-output", label: "翻译 / Translate",
+        onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) })] })
+    }
+    if (manual && !entry) return next(e)
     const failed = entry?.phase === "error" || !displaySourceAllowed(e.props.text) || (!entry && !display.pending.size && !display.running.size)
     // Keep the native source drawing until a complete current translation exists.
     if (!failed) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const children = [await next(e), Text({ color: "red", children: [displayFailure(languages.output)] })]
+    const children = [await next(e), Text({ color: "red", children: [entry?.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output)] })]
     if (entry?.phase === "error") children.push(Button({
       key: "retry-output-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
       onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output),
@@ -166,8 +185,23 @@ export function register(on: On, options: PluginOptions) {
     // A reload can happen after session.start; a shown prompt is also evidence.
     feedback.interactive = true
     const current = feedback.current
-    if (!current || e.props.hasSurvey) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    if (e.props.hasSurvey) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const entry = manualDisplay(options) ? manualDisplayTarget(display, e.surface) : undefined
+    const controls = entry ? Box({ flexDirection: "column", children: [
+      ...(e.props.maxRows >= 3 ? [Text({ dimColor: true, wrap: "truncate-end", children: [(entry.kind === "question" ? parseQuestions(entry.source)?.[0]?.question ?? entry.source : entry.source).replace(/\s+/g, " ").slice(0, 100)] })] : []),
+      Box({ children: [
+        ...(entry.kind === "assistant" && manualDisplayChoices(display, e.surface).filter(candidate => candidate.kind === "assistant").length > 1 ? [
+          Button({ key: "previous-output", label: "上一条", hotkey: "p", onPress: () => selectManualDisplay($, display, e.surface, -1) }),
+          Button({ key: "next-output", label: "下一条", hotkey: "n", onPress: () => selectManualDisplay($, display, e.surface, 1) }),
+        ] : []),
+        Button({ key: "translate-output", label: entry.phase === "error" ? "重试翻译 / Retry" : entry.kind === "question" ? "翻译问题 / Translate" : "翻译回复 / Translate", hotkey: "t",
+          onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
+      ] }),
+    ] }) : undefined
+    if (!current) return controls ? Box({ flexDirection: "column", children: [await next(e), controls] }) : next(e)
+    const feedbackRows = e.props.maxRows - (controls ? e.props.maxRows >= 3 ? 2 : 1 : 0)
+    if (feedbackRows < 1 && controls) return Box({ flexDirection: "column", children: [await next(e), controls] })
     const stage = current.stage === "input" ? "输入翻译" : "输出翻译"
     const target = LANGUAGES[current.target]
     const color = current.phase === "error" ? "red" : current.phase === "done" ? "green" : "cyan"
@@ -178,13 +212,14 @@ export function register(on: On, options: PluginOptions) {
       : current.phase === "done" ? `✓ ${stage}完成 · ${target.label} (${current.target}) · ${current.elapsed.toFixed(1)} 秒`
         : `× ${stage}失败 · ${failureDetail}`
     const content = [Text({ color, children: [title], wrap: "truncate-end" })]
-    if (current.detail && e.props.maxRows >= 4) content.push(Text({ dimColor: true, children: [current.detail], wrap: "truncate-end" }))
-    const compact = e.props.bodyColumns < 32 || e.props.maxRows < 3
+    if (current.detail && feedbackRows >= 4) content.push(Text({ dimColor: true, children: [current.detail], wrap: "truncate-end" }))
+    const compact = e.props.bodyColumns < 32 || feedbackRows < 3
     return Box({
       flexDirection: "column",
       children: [
         await next(e),
         Box({ flexDirection: "column", borderStyle: compact ? undefined : "round", borderColor: color, paddingX: compact ? 0 : 1, children: content }),
+        ...(controls ? [controls] : []),
       ],
     })
   })
