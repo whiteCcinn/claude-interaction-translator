@@ -137,6 +137,8 @@ Select **`final`** to automatically translate only the last assistant reply when
 
 A new followup retires unfinished automatic translation of the earlier reply. Already-started backend requests may continue, but stale results cannot replace the text; submitting after translation starts can therefore produce two backend requests. Native queue cancellation has no per-item notification. If a cancelled submission leaves a pending handoff, the plugin conservatively keeps manual controls until pending work is handled or the session restarts.
 
+You can scroll elsewhere during translation. Requested work and already-started translations continue when their reply leaves the viewport; scrolling back reuses the completed display cache. Automatic work that was neither requested nor started may be dropped offscreen. Cache limits still apply, with idle untranslated history reclaimed before completed results.
+
 Up/Down input recall keeps the exact original you typed, while Claude still receives the translated prompt. This also applies to queued input and normal plugin hot reloads. Previously rewritten history entries are not restored.
 
 Before input translation, a local check examines the natural-language instructions. Confident matches to the prompt language pass through unchanged, without a translation API/Codex call or input progress card. For example, English input can go directly to an English prompt target; Claude's reply language still follows its separate setting. Code, paths and URLs do not influence detection. Mixed, uncertain or oversized input keeps the normal translation path.

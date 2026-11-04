@@ -27,6 +27,7 @@ export type DisplayEntry = {
   phase: "idle" | "pending" | "loading" | "ready" | "error"
   failure?: "queue"
   automaticFinal?: boolean
+  requested?: boolean
   visible: boolean
   translated?: string
   controller: AbortController
@@ -111,11 +112,16 @@ function removeEntry(state: DisplayState, entry: DisplayEntry) {
 }
 
 function makeRoom(state: DisplayState, additional: number, count: number, keep?: DisplayEntry): boolean {
-  for (const entry of state.entries.values()) {
-    if (state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES) break
-    // Manual entries can be recreated without a backend call. Pinning every
-    // restored or completed row would hide controls for newer replies forever.
-    if (entry !== keep && (entry.manual || !entry.visible) && !state.running.has(entry) && entry.phase !== "pending" && entry.phase !== "loading") removeEntry(state, entry)
+  // Scrolling through cheap idle history must not discard a completed result
+  // before those idle entries. Both passes remain bounded by the cache size.
+  for (const idleOnly of [true, false]) {
+    for (const entry of state.entries.values()) {
+      if (state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES) return true
+      if (idleOnly && entry.phase !== "idle") continue
+      // Manual results can still be reclaimed if completed work fills the
+      // cache; pinning them forever would exclude newer translation controls.
+      if (entry !== keep && (entry.manual || !entry.visible) && !state.running.has(entry) && entry.phase !== "pending" && entry.phase !== "loading") removeEntry(state, entry)
+    }
   }
   return state.bytes + additional <= MAX_DISPLAY_BYTES && state.entries.size + count <= MAX_DISPLAY_ENTRIES
 }
@@ -152,6 +158,15 @@ export function hideDisplay(state: DisplayState, surface: RenderSurface, request
   if (!entry) return
   entry.visible = false
   if (entry.phase === "pending" || entry.phase === "loading") removeEntry(state, entry)
+}
+
+export function leaveDisplayViewport(state: DisplayState, surface: RenderSurface, requestId: string, source: string, summary: boolean, target: Language) {
+  const entry = state.entries.get(JSON.stringify([surface, requestId, summary, target, "assistant"]))
+  if (!entry) return
+  entry.visible = false
+  // Visibility alone is not cancellation. A changed source is still stale,
+  // and automatic work not yet requested or started may be dropped cheaply.
+  if (entry.source !== source || (entry.phase === "pending" && !entry.requested)) removeEntry(state, entry)
 }
 
 export function clearDisplay(state: DisplayState) {
@@ -258,6 +273,7 @@ export function requestDisplay($: EngineInterface, options: PluginOptions, confi
   }
   entry.controller = new AbortController()
   entry.automaticFinal = automaticFinal
+  entry.requested = true
   entry.failure = undefined
   entry.phase = "pending"
   state.pending.set(entry.key, entry)

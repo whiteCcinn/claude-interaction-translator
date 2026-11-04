@@ -8,7 +8,7 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { assistantDisplayAllowed, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
+import { assistantDisplayAllowed, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, leaveDisplayViewport, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
@@ -178,8 +178,12 @@ export function register(on: On, options: PluginOptions) {
     if (!displayOnly(options) || languages.reply === languages.output) return next(e)
     const manual = manualDisplay(options)
     if (!manual && !assistantDisplayAllowed(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)) return next(e)
-    if (!e.props.text.trim() || e.props.onScreen === null || (displaySourceAllowed(e.props.text) && (incompleteCode(e.props.text) || displayCodeOnly(e.props.text)))) {
+    if (!e.props.text.trim() || (displaySourceAllowed(e.props.text) && (incompleteCode(e.props.text) || displayCodeOnly(e.props.text)))) {
       hideDisplay(display, e.surface, e.requestId, Boolean(e.props.isSummary), languages.output)
+      return next(e)
+    }
+    if (e.props.onScreen === null) {
+      leaveDisplayViewport(display, e.surface, e.requestId, e.props.text, Boolean(e.props.isSummary), languages.output)
       return next(e)
     }
     feedback.interactive = true
@@ -352,7 +356,11 @@ export function register(on: On, options: PluginOptions) {
       }
       finally {
         display.activeSteps -= 1
-        if (feedback.interactive) $.ui.invalidate("ui.render")
+        // Retained requested work may have no mounted visible row to wake it.
+        try { scheduleDisplay($, options, configuration, display, languages.reply, languages.output) } catch { /* A detached timer must not change the response stream. */ }
+        if (feedback.interactive) {
+          try { $.ui.invalidate("ui.render") } catch { /* Display notification is optional after generation. */ }
+        }
       }
     }
     if (e.agentId || languages.reply === languages.output) return yield* next(e)

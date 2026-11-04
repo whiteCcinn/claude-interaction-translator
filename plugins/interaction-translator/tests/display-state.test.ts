@@ -1,6 +1,6 @@
 import { expect, test } from "claude-code/testing"
 import { createDisplayState, displayEntry, clearDisplay, incompleteCode, MAX_DISPLAY_ENTRIES, MAX_DISPLAY_BYTES, MAX_DISPLAY_SOURCE_BYTES } from "../hooks/display-translation"
-import { assistantDisplayAllowed, recordFreshResponse, manualDisplay, manualDisplayTarget, requestDisplay, MAX_DISPLAY_PENDING, closeQuestionDisplay } from "../hooks/display-translation"
+import { assistantDisplayAllowed, recordFreshResponse, manualDisplay, manualDisplayTarget, requestDisplay, retryDisplay, leaveDisplayViewport, MAX_DISPLAY_PENDING, closeQuestionDisplay } from "../hooks/display-translation"
 import type { EngineInterface } from "claude-code"
 
 const manualEngine = () => {
@@ -38,6 +38,17 @@ test("completed manual translations can make room for a new explicit control", (
   expect(state.pending.size).toBe(0)
 })
 
+test("scrolling through idle history does not evict a completed translation before idle entries", () => {
+  const state = createDisplayState()
+  const translated = displayEntry(state, "terminal", "translated", "Completed answer.", false, "cn", "assistant", false)!
+  translated.phase = "ready"
+  translated.translated = "译文。"
+  translated.visible = false
+  for (let i = 0; i < MAX_DISPLAY_ENTRIES + 5; i++) displayEntry(state, "terminal", String(i), `Old history ${i}.`, false, "cn", "assistant", false)
+  expect(state.entries.get(translated.key)).toBe(translated)
+  expect(state.entries.size).toBe(MAX_DISPLAY_ENTRIES)
+})
+
 test("explicit requests queue once and reject stale, hidden and cleared actions", () => {
   const state = createDisplayState()
   const { engine, scheduled } = manualEngine()
@@ -56,6 +67,23 @@ test("explicit requests queue once and reject stale, hidden and cleared actions"
   clearDisplay(state)
   requestDisplay(engine, {}, {}, state, current, "en", "cn")
   expect(state.pending.size).toBe(0)
+})
+
+test("an explicit retry in auto mode survives scrolling but a changed hidden source remains stale", () => {
+  const state = createDisplayState()
+  const { engine } = manualEngine()
+  const entry = displayEntry(state, "terminal", "retry", "Original reply.", false, "cn")!
+  state.pending.delete(entry.key)
+  entry.phase = "error"
+  expect(entry.manual).toBe(false)
+  retryDisplay(engine, { output_trigger: "auto" }, {}, state, entry, "en", "cn")
+  leaveDisplayViewport(state, "terminal", "retry", "Original reply.", false, "cn")
+  expect(state.pending.get(entry.key)).toBe(entry)
+  expect(entry.controller.signal.aborted).toBe(false)
+  leaveDisplayViewport(state, "terminal", "retry", "Changed reply.", false, "cn")
+  expect(state.entries.has(entry.key)).toBe(false)
+  expect(state.pending.size).toBe(0)
+  expect(entry.controller.signal.aborted).toBe(true)
 })
 
 test("manual question discovery does not evict queued work and queue pressure is retryable", () => {
