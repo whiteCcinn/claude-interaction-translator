@@ -141,6 +141,8 @@ You can scroll elsewhere during translation. Requested work and already-started 
 
 Up/Down input recall keeps the exact original you typed, while Claude still receives the translated prompt. This also applies to queued input and normal plugin hot reloads. Previously rewritten history entries are not restored.
 
+Plain-text followups submitted during a running task are translated before delivery, including Enter, queue submission, and Send now. Queue previews keep the original. If a followup carries images, documents, or other attachments and needs translation, send it after the current task finishes. The current host cannot safely replace the text of these mid-turn media deliveries, so the plugin rejects them with a retry explanation. Confident target-language matches and media submitted while idle remain supported.
+
 Before input translation, a local check examines the natural-language instructions. Confident matches to the prompt language pass through unchanged, without a translation API/Codex call or input progress card. For example, English input can go directly to an English prompt target; Claude's reply language still follows its separate setting. Code, paths and URLs do not influence detection. Mixed, uncertain or oversized input keeps the normal translation path.
 
 | Mode | Interactive UI | Model history | `claude -p` |
@@ -153,6 +155,8 @@ Reply language is requested through instructions; preserving the original respon
 Input translation failure stops submission. Display translation failure keeps the original response visible with an error and a retry button; the original also remains visible during retry. Code, paths, and URLs are protected and restored; code-only or incomplete-code visible blocks remain original. Commands, blank input, and input beginning with `! / #` bypass translation.
 
 If the host changes the input structure so the prepared translation cannot be matched to its prompt, the plugin shows an error and sends Claude an English retry notice instead of the original text. If cancelling many queued prompts fills the pending limit, process the remaining queue or restart the session.
+
+If the host refuses a followup rewrite, the plugin reports unconfirmed delivery and retains the pending handoff. In that case it cannot guarantee the host withheld the original; resend after the turn finishes, or restart the session if the problem persists.
 
 Display translations are cached only in memory. Manual mode translates the selected visible block; restored history can also be translated explicitly. Scrolling, expanding and repainting never start manual translation. The cache holds at most 128 entries and 4 MiB. Manual entries may be evicted under pressure; revisiting an evicted translation shows the original until you press Translate again. In `auto`, only newly appended replies translate automatically; resumed/reloaded history remains original. CLAUDE.md, skills, tool results, and images are not automatically translated; see [context language boundaries](docs/context-language-boundaries.md) for details (Chinese).
 

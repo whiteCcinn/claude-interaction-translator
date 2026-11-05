@@ -10,6 +10,7 @@ export type Feedback = {
   elapsed: number
   frame: number
   detail: string
+  deliveryUnconfirmed?: boolean
   signal: AbortSignal
   timer?: Timer
   dispose: () => void

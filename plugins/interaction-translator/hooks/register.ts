@@ -15,12 +15,14 @@ import type { PreparedInput } from "../types"
 import { canSkipInputTranslation } from "./input-language"
 import { beginFinalStep, beginFinalSubmission, clearFinalOutput, completeFinalOutput, createFinalOutputState, finishFinalStep, finishFinalSubmission, recordFinalResponse, recordFinalStart, refreshFinalOutput, takeFinalDisplay } from "./final-output"
 import type { FinalOutputState, FinalStep } from "./final-output"
+import { queuedInput } from "./queued-input"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
 
 const BYPASS = /^\s*(?:[!/#]\S*|\/(?:translate|locale)\b)/i
 const MODEL = DEFAULT_API_MODEL
+const INPUT_UNAVAILABLE = "Input translation is unavailable. Do not act on this request or its attachments. Ask the user to retry their prompt."
 export { envToken, translatedText } from "./translation-client"
 
 export function register(on: On, options: PluginOptions) {
@@ -121,7 +123,7 @@ export function register(on: On, options: PluginOptions) {
     }
     const source = prepared?.source
     const exact = source !== undefined && unique.includes(source)
-    const replacement = prepared?.translated ?? "Input translation is unavailable. Do not act on this request or its attachments. Ask the user to retry their prompt."
+    const replacement = prepared?.translated ?? INPUT_UNAVAILABLE
     let replaced = false
     const stored = await next({ ...e, message: { ...e.message, content: e.message.content.map(block => {
       if (block.type !== "text" || (exact && block.text !== source)) return block
@@ -132,6 +134,54 @@ export function register(on: On, options: PluginOptions) {
     if (prepared) {
       try { await discardPreparedInput($, prepared.id) }
       catch { /* Keep the bounded claim if cleanup is unavailable. */ }
+    }
+    return stored
+  })
+
+  on("session.append", { door: "delivery" }, async ($, e, next) => {
+    if (e.origin.kind !== "composer" || e.agentId || e.message.type !== "attachment" || e.message.name !== "queued_command" || e.message.isMeta) return next(e)
+    const frames = e.message.content.flatMap((block, index) => {
+      if (block.type !== "text" || typeof block.text !== "string") return []
+      const frame = queuedInput(block.text)
+      return frame ? [{ index, ...frame }] : []
+    })
+    const frame = frames.length === 1 ? frames[0] : undefined
+    // Literal commands can also be delivered in this envelope. Apply the
+    // normal bypass to its body, keeping native framing and command handling.
+    if (frame && (!frame.source.trim() || BYPASS.test(frame.source))) return next(e)
+    if (!e.message.content.some(block => block.type === "text" && typeof block.text === "string" && block.text.trim())) return next(e)
+    let prepared: PreparedInput | undefined
+    if (frame) {
+      try { prepared = await takePreparedInput($, [frame.source], e.uuid) }
+      catch { /* Unknown handoff state must not expose the untranslated body. */ }
+    }
+    if (!prepared) {
+      try {
+        const current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
+        await finishFeedback($, feedback, current, false, "无法匹配追问正文，原文未发送。请重新提交；若持续出现，请重启会话。")
+      } catch { /* Native progress can be hidden while the tool gap is active. */ }
+    }
+    let replaced = false
+    const content = e.message.content.map((block, index) => {
+      if (prepared && frame) return index === frame.index ? { ...block, text: frame.prefix + prepared.translated + frame.suffix } : block
+      if (block.type !== "text") return block
+      const text = replaced ? "" : INPUT_UNAVAILABLE
+      replaced = true
+      return { ...block, text }
+    })
+    const stored = await next({ ...e, message: { ...e.message, content } })
+    const expected = content.flatMap(block => block.type === "text" && typeof block.text === "string" && block.text ? [block.text] : [])
+    const actual = stored.message?.content.flatMap(block => block.type === "text" && typeof block.text === "string" && block.text ? [block.text] : [])
+    const confirmed = stored.uuid === e.uuid && actual?.length === expected.length && expected.every((text, index) => text === actual[index])
+    if (confirmed && prepared) {
+      try { await discardPreparedInput($, prepared.id) }
+      catch { /* Keep the claim until the session can safely release it. */ }
+    } else if (!confirmed) {
+      try {
+        const current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
+        if (current) current.deliveryUnconfirmed = true
+        await finishFeedback($, feedback, current, false, "宿主未采用追问译文或重试提示。请等待本轮结束后重新提交；若持续出现，请重启会话。")
+      } catch { /* Preserve the claim even when feedback is unavailable. */ }
     }
     return stored
   })
@@ -237,7 +287,7 @@ export function register(on: On, options: PluginOptions) {
     const target = LANGUAGES[current.target]
     const color = current.phase === "error" ? "red" : current.phase === "done" ? "green" : "cyan"
     const translatorLabel = useCodex ? "Codex CLI" : configuration.resolved?.model ?? MODEL
-    const failureDetail = current.stage === "input" ? "原文未发送" : displayOnly(options) ? "已保留原文" : "未显示原文"
+    const failureDetail = current.stage === "input" ? current.deliveryUnconfirmed ? "交付未确认" : "原文未发送" : displayOnly(options) ? "已保留原文" : "未显示原文"
     const title = current.phase === "loading"
       ? `${stage}中${[".", "..", "..."][current.frame % 3]}  ${current.elapsed.toFixed(1)} 秒 · ${target.label} (${current.target}) · ${translatorLabel}`
       : current.phase === "done" ? `✓ ${stage}完成 · ${target.label} (${current.target}) · ${current.elapsed.toFixed(1)} 秒`
@@ -267,15 +317,26 @@ export function register(on: On, options: PluginOptions) {
       BYPASS.test(e.text)
     ) return next(e)
 
+    const leadingTag = /^[A-Z][A-Z0-9_-]{2,}:[ \t]*/.exec(e.text)?.[0] ?? ""
+    const skipTranslation = canSkipInputTranslation(e.text.slice(leadingTag.length), code)
+    // Native queued attachments with media refuse recorded-rendering rewrites.
+    // Keep original recall without silently handing untranslated instructions
+    // to the model. Idle media uses the ordinary, writable prompt door.
+    if (e.origin.kind === "composer" && e.turnId && e.attachments?.length && !skipTranslation) {
+      try {
+        const current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
+        await finishFeedback($, feedback, current, false, "运行中的带附件追问暂不支持安全翻译。请等待本轮任务结束后重新发送。")
+      } catch { /* The submission must still be rejected if its UI is unavailable. */ }
+      return { drop: "Please resend this message with attachments after the current turn finishes; its queued text cannot be translated safely." }
+    }
+
     const finalSubmission = finalDisplay(options) && e.origin.kind === "composer" ? beginFinalSubmission(finalOutput) : undefined
     if (finalDisplay(options) && e.origin.kind === "composer") cancelFinalDisplay(display)
 
     let translated: string | undefined
     let preparedId: number | undefined
     let inputAccepted = false
-    const leadingTag = /^[A-Z][A-Z0-9_-]{2,}:[ \t]*/.exec(e.text)?.[0] ?? ""
     const protectedText = protectText(e.text.slice(leadingTag.length))
-    const skipTranslation = canSkipInputTranslation(e.text.slice(leadingTag.length), code)
     let errorHint = "请检查网络后重试。"
     let current: Feedback | undefined
     try {
