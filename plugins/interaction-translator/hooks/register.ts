@@ -16,6 +16,7 @@ import { canSkipInputTranslation } from "./input-language"
 import { beginFinalStep, beginFinalSubmission, clearFinalOutput, completeFinalOutput, createFinalOutputState, finishFinalStep, finishFinalSubmission, recordFinalResponse, recordFinalStart, refreshFinalOutput, takeFinalDisplay } from "./final-output"
 import type { FinalOutputState, FinalStep } from "./final-output"
 import { queuedInput } from "./queued-input"
+import { bilingualInputEcho, clearInputEcho, createInputEchoState, recordInputEcho } from "./input-echo"
 
 export { LANGUAGES, languageCode, translationPrompt } from "./languages"
 export { protectText, restoreText } from "./protected-text"
@@ -34,6 +35,7 @@ export function register(on: On, options: PluginOptions) {
   const display = createDisplayState(feedback)
   const finalOutput = createFinalOutputState()
   const interruptedDrains = new Set<string>()
+  const inputEcho = createInputEchoState()
 
   on("command.run", { command: /^(?:plugin|config)$/ }, async ($, e, next) => {
     const target = configurationTarget(e.command, e.args, $.plugin.name)
@@ -46,6 +48,7 @@ export function register(on: On, options: PluginOptions) {
   })
 
   on("session.start", async ($, e, next) => {
+    clearInputEcho(inputEcho)
     clearDisplay(display)
     clearFinalOutput(finalOutput)
     feedback.interactive = e.isInteractive
@@ -60,6 +63,7 @@ export function register(on: On, options: PluginOptions) {
   })
 
   on("command.run", { command: "resume" }, ($, e, next) => {
+    clearInputEcho(inputEcho)
     clearDisplay(display)
     clearFinalOutput(finalOutput)
     return next(e)
@@ -81,6 +85,7 @@ export function register(on: On, options: PluginOptions) {
   })
 
   on("session.end", async ($, e, next) => {
+    clearInputEcho(inputEcho)
     clearDisplay(display)
     clearFinalOutput(finalOutput)
     if (feedback.current) clearFeedback($, feedback)
@@ -106,6 +111,7 @@ export function register(on: On, options: PluginOptions) {
 
   on("session.append", { door: "prompt" }, async ($, e, next) => {
     if (e.origin.kind !== "composer" || e.agentId || e.message.type !== "user" || e.message.isMeta) return next(e)
+    const echoEpoch = inputEcho.epoch
     const texts = e.message.content.flatMap(block => block.type === "text" && typeof block.text === "string" ? [block.text] : [])
     const joined = texts.join("\n").trim()
     if (!joined || BYPASS.test(joined)) return next(e)
@@ -125,13 +131,21 @@ export function register(on: On, options: PluginOptions) {
     const exact = source !== undefined && unique.includes(source)
     const replacement = prepared?.translated ?? INPUT_UNAVAILABLE
     let replaced = false
-    const stored = await next({ ...e, message: { ...e.message, content: e.message.content.map(block => {
+    const content = e.message.content.map(block => {
       if (block.type !== "text" || (exact && block.text !== source)) return block
       const text = replaced ? "" : replacement
       replaced = true
       return { ...block, text }
-    }) } })
+    })
+    const stored = await next({ ...e, message: { ...e.message, content } })
     if (prepared) {
+      const expected = content.flatMap(block => block.type === "text" && typeof block.text === "string" && block.text ? [block.text] : [])
+      const actual = stored.message?.content.flatMap(block => block.type === "text" && typeof block.text === "string" && block.text ? [block.text] : [])
+      const confirmed = stored.uuid === e.uuid && actual?.length === expected.length && expected.every((text, index) => text === actual[index])
+      const translatedBlocks = stored.message?.content.flatMap((block, index) => block.type === "text" && block.text === prepared.translated ? [index] : [])
+      if (echoEpoch === inputEcho.epoch && confirmed && translatedBlocks?.length === 1 && recordInputEcho(inputEcho, e.uuid, prepared.source, prepared.translated, translatedBlocks[0])) {
+        try { $.ui.invalidate("ui.render") } catch { /* The next draw can use the recorded presentation. */ }
+      }
       try { await discardPreparedInput($, prepared.id) }
       catch { /* Keep the bounded claim if cleanup is unavailable. */ }
     }
@@ -140,6 +154,7 @@ export function register(on: On, options: PluginOptions) {
 
   on("session.append", { door: "delivery" }, async ($, e, next) => {
     if (e.origin.kind !== "composer" || e.agentId || e.message.type !== "attachment" || e.message.name !== "queued_command" || e.message.isMeta) return next(e)
+    const echoEpoch = inputEcho.epoch
     const frames = e.message.content.flatMap((block, index) => {
       if (block.type !== "text" || typeof block.text !== "string") return []
       const frame = queuedInput(block.text)
@@ -174,6 +189,9 @@ export function register(on: On, options: PluginOptions) {
     const actual = stored.message?.content.flatMap(block => block.type === "text" && typeof block.text === "string" && block.text ? [block.text] : [])
     const confirmed = stored.uuid === e.uuid && actual?.length === expected.length && expected.every((text, index) => text === actual[index])
     if (confirmed && prepared) {
+      if (echoEpoch === inputEcho.epoch && recordInputEcho(inputEcho, e.uuid, prepared.source, prepared.translated)) {
+        try { $.ui.invalidate("ui.render") } catch { /* The next draw can use the recorded presentation. */ }
+      }
       try { await discardPreparedInput($, prepared.id) }
       catch { /* Keep the claim until the session can safely release it. */ }
     } else if (!confirmed) {
@@ -184,6 +202,12 @@ export function register(on: On, options: PluginOptions) {
       } catch { /* Preserve the claim even when feedback is unavailable. */ }
     }
     return stored
+  })
+
+  on("ui.render", { component: "UserMessage" }, (_, e, next) => {
+    if (e.props.origin.kind !== "composer") return next(e)
+    const text = bilingualInputEcho(inputEcho, e.requestId, e.props.text)
+    return text === undefined ? next(e) : next({ ...e, props: { ...e.props, text } })
   })
 
   on("tool.call", { tool: "AskUserQuestion" }, async (_, e, next) => {

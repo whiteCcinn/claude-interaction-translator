@@ -141,6 +141,10 @@ You can scroll elsewhere during translation. Requested work and already-started 
 
 Up/Down input recall keeps the exact original you typed, while Claude still receives the translated prompt. This also applies to queued input and normal plugin hot reloads. Previously rewritten history entries are not restored.
 
+After a new input is translated and successfully delivered, its conversation row shows the original above the translation, labeled `原文` and `译文`. The request body still uses only the translation; bilingual presentation adds nothing to model context or Up/Down recall. Identical wording is shown once, commands keep their native presentation, and pending queue previews remain original.
+
+Bilingual echo reuses the completed input translation without another provider request. Its in-memory cache holds at most 128 rows and 2 MiB. Eviction, plugin reload, or session resume returns affected rows to native drawing without translating history again. Oversized or unmatched rows also keep native drawing.
+
 Plain-text followups submitted during a running task are translated before delivery, including Enter, queue submission, and Send now. Queue previews keep the original. If a followup carries images, documents, or other attachments and needs translation, send it after the current task finishes. The current host cannot safely replace the text of these mid-turn media deliveries, so the plugin rejects them with a retry explanation. Confident target-language matches and media submitted while idle remain supported.
 
 Before input translation, a local check examines the natural-language instructions. Confident matches to the prompt language pass through unchanged, without a translation API/Codex call or input progress card. For example, English input can go directly to an English prompt target; Claude's reply language still follows its separate setting. Code, paths and URLs do not influence detection. Mixed, uncertain or oversized input keeps the normal translation path.
