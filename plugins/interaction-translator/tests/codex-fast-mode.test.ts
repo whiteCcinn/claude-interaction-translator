@@ -53,7 +53,7 @@ test("API translation ignores the CLI Fast preference", { options: { codex_fast_
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const body = JSON.parse(e.init?.body ?? "{}")
+    const body = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(body.model).toBe("glm-5.3-flash")
     expect(body.reasoning_effort).toBe("low")
     expect(body.service_tier).toBe(undefined)

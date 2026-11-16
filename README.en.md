@@ -21,7 +21,7 @@ All four languages are configurable. Supported languages are Chinese, English, J
 
 ## 1. Prerequisites
 
-- Install Claude Code and sign in. The current validation baseline is **Claude Code 2.1.316**; later versions must remain compatible with its native Mods API.
+- Install Claude Code and sign in. The current validation baseline is **Claude Code 2.1.325**; later versions must remain compatible with its native Mods API.
 - For Codex CLI translation, install and authenticate Codex in the same environment used to launch Claude Code. The invocation has been verified with Codex CLI 0.166.0.
 - For API translation, prepare your translation endpoint, model ID, and API key. Keep using your existing Claude authentication and main-model configuration.
 
@@ -96,6 +96,7 @@ Set Translation backend to `codex-cli`:
 | Codex translation model | Follow local configuration, choose a preset, or select manual input |
 | Codex reasoning effort | Follow local configuration, choose `low / medium / high / xhigh / max`, or enter a manual value |
 | Codex Fast mode | Follow local configuration; `on` requests Fast, `off` disables Fast for translation |
+| Codex translation timeout (seconds) | `codex_timeout_seconds`, default `120`; an integer from `1` to `600` seconds; use `300` or `600` for longer replies |
 
 The native pickers use `跟随本地配置` for inheritance and `手动输入` for manual input. After choosing manual input, fill in the adjacent manual-value row. Enter executable paths without extra quotes or arguments. Unused manual-value rows can remain empty.
 
@@ -109,7 +110,15 @@ claude plugin install interaction-translator@claude-interaction-translator \
   --config codex_reasoning_effort=low
 ```
 
-These options apply to both input and output translation. They do not modify your local Codex configuration file or Claude's main model. Each CLI translation uses an ephemeral session with a 120-second timeout; failures do not fall back to the API backend.
+These options apply to input, output and question-dialog translation. They do not modify your local Codex configuration file or Claude's main model. Each CLI translation uses an ephemeral session and waits up to 120 seconds by default; failures do not fall back to the API backend.
+
+For longer replies, open `/plugin configure interaction-translator@claude-interaction-translator`, set **Codex translation timeout (seconds)** to `300` or `600`, save, then run `/reload-plugins` or restart Claude. At installation you can also pass `--config codex_timeout_seconds=300`. This is a per-call CLI deadline; the host allows at most 600 seconds. The API backend does not use this setting.
+
+Output errors distinguish an elapsed deadline (including the configured seconds), CLI exit codes, empty translations, truncated output, and protected-text or question-format validation failures. A timeout means the call failed after reaching its deadline; older generic failure messages cannot establish a historical cause. Increasing the timeout only helps when the waiting period was insufficient.
+
+Failures also show stable error codes such as `TR_CLI_TIMEOUT`, `TR_CLI_EXIT`, `TR_API_HTTP`, `TR_API_REQUEST`, `TR_API_RESPONSE`, and `TR_TEXT_INVALID`. Click **复制错误信息 / Copy error** beside a failure to copy a JSON report for troubleshooting. In classic terminals, focus the prompt-band controls with `Ctrl+X`, then `Tab`, and press `c`. Select the intended failed reply first when several are available.
+
+Reports contain only the code, backend, stage, available elapsed time, configured CLI deadline, HTTP status and exit code. They omit source/translated text, credentials, endpoint URLs, model names, executable paths, stderr and response bodies. Clipboard refusal or errors are reported accurately; the on-screen diagnostic summary remains available for manual copying. Reports stay in session memory, are never logged or uploaded automatically, and clear on retry. Classic native question dialogs cannot focus plugin buttons; copy their visible code/summary manually or use fullscreen. Include your plugin/Claude Code versions and reproduction steps when reporting an issue.
 
 ### API settings
 

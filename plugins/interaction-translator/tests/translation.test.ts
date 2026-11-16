@@ -38,7 +38,7 @@ test("loads a plugin-local API key and sends the OpenAI-compatible request", asy
   })
   on("ui.invalidate", () => ({ value: undefined }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.model).toBe("glm-5.3-flash")
     expect(request.reasoning_effort).toBe("low")
     expect(request.messages[0].content).toContain("natural English")
@@ -74,7 +74,7 @@ test("preserves leading identifiers and allows an existing path at the start", a
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[1].content).toBe("请保留 __GLM_KEEP_0__。")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: "__GLM_KEEP_0__を保持してください。" } }] }) } }
   })
@@ -107,7 +107,7 @@ test("translates foreign input and bypasses already-English input", async ($, on
   let calls = 0
   on("http.fetch", (_, e) => {
     calls += 1
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("Detect the input language")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: "Change the button." } }] }) } }
   })
@@ -142,7 +142,7 @@ test("animates the loading card and removes the completed preview", async ($, on
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))
   const submission = $.prompt.submit({ text: "修改按钮", origin: { kind: "composer" }, wait: false })
   await clock.settle()
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
   expect((await ui.find({ type: "Text", text: /翻译中/ }))?.text).toContain("翻译中.")
   await clock.advance(500)
   expect((await ui.find({ type: "Text", text: /翻译中/ }))?.text).toContain("翻译中...")
@@ -165,7 +165,7 @@ test("keeps the failure card until the next input", async ($, on) => {
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))
   const result = await $.prompt.submit({ text: "修改按钮", origin: { kind: "composer" }, wait: false })
   expect(result.drop).toContain("API Key")
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
   expect((await ui.find({ type: "Text", text: /翻译失败/ }))?.text).toContain("原文未发送")
   await clock.advance(6000)
   expect((await ui.find({ type: "Text", text: /翻译失败/ }))?.text).toContain("原文未发送")

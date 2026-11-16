@@ -60,7 +60,7 @@ test("API preset ignores retained manual endpoint/model values", { options: { ap
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
     expect(e.url).toBe(DEFAULT_API_URL)
-    expect(JSON.parse(e.init?.body ?? "{}").model).toBe(DEFAULT_API_MODEL)
+    expect(JSON.parse(typeof e.init?.body === "string" ? e.init.body : "").model).toBe(DEFAULT_API_MODEL)
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "Hello." } }] }) } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text }))

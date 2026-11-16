@@ -3,8 +3,12 @@ import type { Language } from "./languages"
 import { translationPrompt } from "./languages"
 import { protectText, restoreText } from "./protected-text"
 import { requestTranslation } from "./translation-client"
+import { translationFailureCode, translationFailureHint } from "./translation-errors"
+import type { TranslationFailure } from "./translation-errors"
+import { createTranslationDiagnostic, diagnosticTime } from "./translation-diagnostics"
+import type { TranslationDiagnostic } from "./translation-diagnostics"
 import type { ConfigurationState } from "./configuration-runtime"
-import { finishFeedback, startFeedback } from "./translation-feedback"
+import { clearFeedback, finishFeedback, startFeedback } from "./translation-feedback"
 import type { Feedback, FeedbackState } from "./translation-feedback"
 import { prepareQuestionTranslation, questionTranslationPrompt, restoreQuestionTranslation } from "./question-translation"
 
@@ -26,6 +30,9 @@ export type DisplayEntry = {
   bytes: number
   phase: "idle" | "pending" | "loading" | "ready" | "error"
   failure?: "queue"
+  translationFailure?: TranslationFailure
+  diagnostic?: TranslationDiagnostic
+  feedbackHandle?: Feedback
   automaticFinal?: boolean
   requested?: boolean
   visible: boolean
@@ -219,38 +226,54 @@ export function scheduleDisplay($: EngineInterface, options: PluginOptions, conf
 
 export async function translateDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language): Promise<void> {
   let feedback: Feedback | undefined
+  const controller = entry.controller
+  const startedAt = await diagnosticTime($)
   try {
     if (state.feedback?.interactive && !(state.feedback.current?.stage === "input" && state.feedback.current.phase === "loading")) {
-      feedback = await startFeedback($, state.feedback, "output", source, target, entry.controller.signal)
+      feedback = await startFeedback($, state.feedback, "output", source, target, controller.signal)
+      entry.feedbackHandle = feedback
     }
     const question = entry.kind === "question" ? prepareQuestionTranslation(entry.source) : undefined
-    if (entry.kind === "question" && !question) { entry.phase = "error"; return }
+    if (entry.kind === "question" && !question) { entry.translationFailure = { kind: "markers" }; entry.phase = "error"; return }
     const protectedText = question ? undefined : protectText(entry.source)
     const text = question?.text ?? protectedText?.text
     if (text === undefined) { entry.phase = "error"; return }
     const prompt = question ? questionTranslationPrompt(target, source) : translationPrompt(target, source, "response")
-    const result = await requestTranslation($, options, configuration, prompt, text, 8192, entry.controller.signal)
-    if (state.entries.get(entry.key) !== entry || entry.controller.signal.aborted) return
-    const translated = "text" in result ? question ? restoreQuestionTranslation(result.text, question)
-      : protectedText ? restoreText(result.text, protectedText) : undefined : undefined
-    if (translated === undefined) { entry.phase = "error"; return }
+    const result = await requestTranslation($, options, configuration, prompt, text, 8192, controller.signal)
+    if (state.entries.get(entry.key) !== entry || entry.controller !== controller || controller.signal.aborted) return
+    if ("drop" in result) {
+      entry.translationFailure = result.failure
+      entry.phase = "error"
+      return
+    }
+    const translated = question ? restoreQuestionTranslation(result.text, question)
+      : protectedText ? restoreText(result.text, protectedText) : undefined
+    if (translated === undefined) { entry.translationFailure = { kind: "markers" }; entry.phase = "error"; return }
     const extra = encoder.encode(translated).byteLength
-    if (extra > MAX_DISPLAY_SOURCE_BYTES || !makeRoom(state, extra, 0, entry)) { entry.phase = "error"; return }
+    if (extra > MAX_DISPLAY_SOURCE_BYTES || !makeRoom(state, extra, 0, entry)) { entry.translationFailure = { kind: "capacity" }; entry.phase = "error"; return }
     entry.translated = translated
     entry.bytes += extra
     state.bytes += extra
     entry.phase = "ready"
   } catch {
-    if (state.entries.get(entry.key) === entry && !entry.controller.signal.aborted) entry.phase = "error"
+    if (state.entries.get(entry.key) === entry && entry.controller === controller && !controller.signal.aborted) entry.phase = "error"
   } finally {
     state.running.delete(entry)
+    if (entry.phase === "error" && state.entries.get(entry.key) === entry && entry.controller === controller && !controller.signal.aborted) {
+      const now = await diagnosticTime($)
+      if (entry.phase === "error" && state.entries.get(entry.key) === entry && entry.controller === controller && !controller.signal.aborted) {
+        entry.translationFailure ??= { kind: "unknown" }
+        entry.diagnostic = createTranslationDiagnostic(options, entry.kind === "question" ? "question" : "output", entry.translationFailure,
+          startedAt === undefined || now === undefined ? undefined : now - startedAt)
+      }
+    }
     try {
-      if (state.feedback) await finishFeedback($, state.feedback, feedback, entry.phase === "ready", entry.phase === "error" ? displayFailure(target) : undefined)
+      if (state.feedback) await finishFeedback($, state.feedback, feedback, entry.phase === "ready", entry.phase === "error" ? displayFailure(target, entry.translationFailure) : undefined, entry.diagnostic)
     } catch {
       // A progress-card failure must not change a completed UI translation.
     }
     try {
-      if (state.entries.get(entry.key) === entry && !entry.controller.signal.aborted) $.ui.invalidate("ui.render")
+      if (state.entries.get(entry.key) === entry && entry.controller === controller && !controller.signal.aborted) $.ui.invalidate("ui.render")
       scheduleDisplay($, options, configuration, state, source, target)
     } catch {
       // Rendering may have detached while this independent task completed.
@@ -265,9 +288,14 @@ export function retryDisplay($: EngineInterface, options: PluginOptions, configu
 
 export function requestDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, entry: DisplayEntry, source: Language, target: Language, automaticFinal = false) {
   if (state.entries.get(entry.key) !== entry || !entry.visible || (entry.phase !== "idle" && entry.phase !== "error") || (entry.kind === "assistant" && state.activeSteps)) return
+  if (state.feedback && state.feedback.current === entry.feedbackHandle && entry.feedbackHandle?.phase === "error") clearFeedback($, state.feedback)
+  entry.feedbackHandle = undefined
+  if (entry.phase === "error") entry.controller.abort()
   if (state.pending.size >= MAX_DISPLAY_PENDING) {
     entry.phase = "error"
     entry.failure = "queue"
+    entry.translationFailure = { kind: "queue" }
+    entry.diagnostic = createTranslationDiagnostic(options, entry.kind === "question" ? "question" : "output", entry.translationFailure)
     $.ui.invalidate("ui.render")
     return
   }
@@ -275,6 +303,8 @@ export function requestDisplay($: EngineInterface, options: PluginOptions, confi
   entry.automaticFinal = automaticFinal
   entry.requested = true
   entry.failure = undefined
+  entry.translationFailure = undefined
+  entry.diagnostic = undefined
   entry.phase = "pending"
   state.pending.set(entry.key, entry)
   scheduleDisplay($, options, configuration, state, source, target)
@@ -315,7 +345,13 @@ export function displayQueueFailure(target: Language): string {
   }[target]
 }
 
-export function displayFailure(target: Language): string {
+export function displayFailure(target: Language, failure?: TranslationFailure): string {
+  if (failure) return {
+    cn: "输出翻译失败，已保留原文。",
+    en: "Output translation failed; the original response is still displayed. ",
+    jp: "出力の翻訳に失敗しました。原文を表示しています。",
+    fr: "Échec de la traduction de sortie ; la réponse originale reste affichée. ",
+  }[target] + `[${translationFailureCode(failure)}] ` + translationFailureHint(failure, target)
   return {
     cn: "输出翻译失败，已保留原文。请检查翻译配置或缩短回复后重试。",
     en: "Output translation failed; the original response is still displayed. Check the translator settings or retry with a shorter response.",

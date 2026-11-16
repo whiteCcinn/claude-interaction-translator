@@ -17,7 +17,7 @@ for (const backend of ["api", "codex-cli"]) {
     expect(accepted.context?.[1]).toContain("Reply in natural French")
     const row = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "same-language", message: { type: "user", content: [{ type: "text", text: source }] } })
     expect(row.message?.content).toEqual([{ type: "text", text: source }])
-    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
     await clock.advance(1000)
     expect(calls).toBe(0)
     expect(await ui.find({ text: /输入翻译/ })).toBe(undefined)

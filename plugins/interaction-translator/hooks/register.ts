@@ -8,6 +8,9 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
+import { translationFailureHint } from "./translation-errors"
+import type { TranslationFailure } from "./translation-errors"
+import { copyTranslationDiagnostic, createTranslationDiagnostic, diagnosticSummary } from "./translation-diagnostics"
 import { assistantDisplayAllowed, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, leaveDisplayViewport, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
 import { parseQuestions, questionSource } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, takePreparedInput } from "./input-history"
@@ -237,11 +240,17 @@ export function register(on: On, options: PluginOptions) {
     if (entry?.phase !== "error" && entry?.phase !== "idle") return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     if (manual && e.surface === "terminal" && e.viewport?.isFullscreen === false) return Box({ flexDirection: "column", children: [
+      ...(entry.phase === "error" ? [Text({ color: "red", children: [displayFailure(languages.output, entry.translationFailure)] }),
+        ...(entry.diagnostic ? [Text({ dimColor: true, children: [diagnosticSummary(entry.diagnostic)] })] : [])] : []),
       Text({ dimColor: true, children: ["普通终端的选择面板不支持点按翻译。可切换全屏，或在配置中将 Display translation trigger 设为 auto。"] }),
       await next(e),
     ] })
     return Box({ flexDirection: "column", children: [
-      ...(entry.phase === "error" ? [Text({ color: "red", wrap: "truncate-end", children: [entry.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output)] })] : []),
+      ...(entry.phase === "error" ? [Text({ color: "red", wrap: "truncate-end", children: [entry.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output, entry.translationFailure)] })] : []),
+      ...(entry.phase === "error" && entry.diagnostic ? [
+        Text({ dimColor: true, wrap: "truncate-end", children: [diagnosticSummary(entry.diagnostic)] }),
+        Button({ key: "copy-question-error", label: "复制错误信息 / Copy error", onPress: () => entry.diagnostic ? copyTranslationDiagnostic($, e.surface, entry.diagnostic) : undefined }),
+      ] : []),
       Button({ key: entry.phase === "error" ? "retry-question-translation" : "translate-question", label: entry.phase === "error" ? "重试翻译 / Retry" : "翻译问题 / Translate",
         onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
       await next(e),
@@ -278,11 +287,17 @@ export function register(on: On, options: PluginOptions) {
     // Keep the native source drawing until a complete current translation exists.
     if (!failed) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const children = [await next(e), Text({ color: "red", children: [entry?.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output)] })]
-    if (entry?.phase === "error") children.push(Button({
-      key: "retry-output-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
-      onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output),
-    }))
+    const failure = entry?.translationFailure ?? { kind: entry ? "unknown" : "capacity" } as const
+    const diagnostic = entry?.diagnostic ?? createTranslationDiagnostic(options, "output", failure)
+    const children = [await next(e), Text({ color: "red", children: [entry?.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output, failure)] }),
+      Text({ dimColor: true, children: [diagnosticSummary(diagnostic)] }), Button({ key: "copy-output-error", label: "复制错误信息 / Copy error",
+        onPress: () => copyTranslationDiagnostic($, e.surface, diagnostic) })]
+    if (entry?.phase === "error") {
+      children.push(Button({
+        key: "retry-output-translation", label: languages.output === "cn" ? "重试翻译" : "Retry translation",
+        onPress: () => retryDisplay($, options, configuration, display, entry, languages.reply, languages.output),
+      }))
+    }
     return Box({ flexDirection: "column", children })
   })
 
@@ -293,6 +308,7 @@ export function register(on: On, options: PluginOptions) {
     if (e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const entry = manualDisplay(options) ? manualDisplayTarget(display, e.surface) : undefined
+    const copyingInput = current?.phase === "error" && current.stage === "input" && Boolean(current.diagnostic)
     const controls = entry ? Box({ flexDirection: "column", children: [
       ...(e.props.maxRows >= 3 ? [Text({ dimColor: true, wrap: "truncate-end", children: [(entry.kind === "question" ? parseQuestions(entry.source)?.[0]?.question ?? entry.source : entry.source).replace(/\s+/g, " ").slice(0, 100)] })] : []),
       Box({ children: [
@@ -302,6 +318,8 @@ export function register(on: On, options: PluginOptions) {
         ] : []),
         Button({ key: "translate-output", label: entry.phase === "error" ? "重试翻译 / Retry" : entry.kind === "question" ? "翻译问题 / Translate" : "翻译回复 / Translate", hotkey: "t",
           onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
+        ...(entry.phase === "error" && entry.diagnostic && !copyingInput ? [Button({ key: "copy-selected-error", label: "复制错误信息 / Copy error", hotkey: "c",
+          onPress: () => entry.diagnostic ? copyTranslationDiagnostic($, e.surface, entry.diagnostic) : undefined })] : []),
       ] }),
     ] }) : undefined
     if (!current) return controls ? Box({ flexDirection: "column", children: [await next(e), controls] }) : next(e)
@@ -315,10 +333,14 @@ export function register(on: On, options: PluginOptions) {
     const title = current.phase === "loading"
       ? `${stage}中${[".", "..", "..."][current.frame % 3]}  ${current.elapsed.toFixed(1)} 秒 · ${target.label} (${current.target}) · ${translatorLabel}`
       : current.phase === "done" ? `✓ ${stage}完成 · ${target.label} (${current.target}) · ${current.elapsed.toFixed(1)} 秒`
-        : `× ${stage}失败 · ${failureDetail}`
+        : `× ${stage}失败 · ${failureDetail}${current.diagnostic ? ` · ${current.diagnostic.code}` : ""}`
+    const compact = e.props.bodyColumns < 32 || feedbackRows < 3 || (current.phase === "error" && feedbackRows < 5)
+    const contentRows = Math.max(1, feedbackRows - (compact ? 0 : 2))
     const content = [Text({ color, children: [title], wrap: "truncate-end" })]
-    if (current.detail && feedbackRows >= 4) content.push(Text({ dimColor: true, children: [current.detail], wrap: "truncate-end" }))
-    const compact = e.props.bodyColumns < 32 || feedbackRows < 3
+    if (current.detail && (current.phase === "error" ? contentRows >= 3 : feedbackRows >= 4 && contentRows >= 2)) content.push(Text({ dimColor: true, children: [current.detail], wrap: "truncate-end" }))
+    if (current.phase === "error" && current.diagnostic && contentRows >= 4) content.push(Text({ dimColor: true, children: [diagnosticSummary(current.diagnostic)], wrap: "truncate-end" }))
+    if (current.phase === "error" && current.diagnostic && contentRows >= 2 && (!entry?.diagnostic || copyingInput)) content.push(Button({ key: "copy-translation-error", label: "复制错误信息 / Copy error", hotkey: "c",
+      onPress: () => current.diagnostic ? copyTranslationDiagnostic($, e.surface, current.diagnostic) : undefined }))
     return Box({
       flexDirection: "column",
       children: [
@@ -362,6 +384,7 @@ export function register(on: On, options: PluginOptions) {
     let inputAccepted = false
     const protectedText = protectText(e.text.slice(leadingTag.length))
     let errorHint = "请检查网络后重试。"
+    let inputFailure: TranslationFailure | undefined
     let current: Feedback | undefined
     try {
       if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
@@ -369,7 +392,8 @@ export function register(on: On, options: PluginOptions) {
       const result = skipTranslation ? { text: protectedText.text }
         : await requestTranslation($, options, configuration, translationPrompt(code, languages.input), protectedText.text, 1024, next.signal)
       if ("drop" in result) {
-        errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置（超时 120 秒）。" : errorHint)
+        inputFailure = result.failure ?? { kind: "unknown" }
+        errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置。" : errorHint)
         return { drop: result.drop }
       }
       translated = result.text
@@ -381,12 +405,14 @@ export function register(on: On, options: PluginOptions) {
       if (!translated) return { drop: FAILURE }
       translated = restoreText(translated, protectedText)
       if (!translated) {
+        inputFailure = { kind: "markers" }
         errorHint = "路径、链接或代码未完整保留，请重试。"
         return { drop: "The translation did not preserve protected paths or code. This prompt was not sent; retry." }
       }
       const introducedPrefix = /^[!/#]\S*/.exec(translated)?.[0]
       const originalAtStart = protectedText.values.some(value => translated?.startsWith(value))
       if (introducedPrefix && !e.text.includes(introducedPrefix) && !originalAtStart) {
+        inputFailure = { kind: "command-prefix" }
         errorHint = "译文出现额外命令前缀，请重试。"
         translated = undefined
         return { drop: "The translation introduced a command prefix. This prompt was not sent; retry." }
@@ -396,6 +422,7 @@ export function register(on: On, options: PluginOptions) {
       if (e.origin.kind === "composer") {
         const prepared = await prepareInput($, e.text, translated, code)
         if (!prepared || next.signal.aborted) {
+          inputFailure = { kind: "input-handoff" }
           if (prepared) await discardPreparedInput($, prepared.id)
           translated = undefined
           errorHint = "输入等待队列已满、目标语言冲突或翻译已取消，请稍后重试。"
@@ -423,7 +450,8 @@ export function register(on: On, options: PluginOptions) {
       const released = finishFinalSubmission(finalOutput, finalSubmission, inputAccepted)
       const deferred = finalOutput.lastStep
       if (released && !inputAccepted && deferred?.complete && feedback.interactive && !next.signal.aborted) await refreshFinalDisplay($, finalOutput, deferred)
-      await finishFeedback($, feedback, current, Boolean(translated), translated ?? errorHint)
+      await finishFeedback($, feedback, current, Boolean(translated), translated ?? errorHint,
+        translated ? undefined : createTranslationDiagnostic(options, "input", inputFailure ?? { kind: "unknown" }))
     }
   }).catch((_, e, next) => {
     return next.called ? next(e) : { drop: FAILURE }
@@ -506,6 +534,8 @@ export function register(on: On, options: PluginOptions) {
       const protectedText = protectText(plan.text, plan.markers)
       if (next.signal.aborted) return { ...result, answer: "" }
       const current = await startFeedback($, feedback, "output", languages.reply, languages.output, next.signal)
+      let failureDetail = error
+      let outputFailureReason: TranslationFailure = { kind: "unknown" }
       try {
         const translated = await requestTranslation($, options, configuration,
           translationPrompt(languages.output, languages.reply, "response"), protectedText.text, 8192, next.signal)
@@ -513,9 +543,12 @@ export function register(on: On, options: PluginOptions) {
         if ("text" in translated) {
           const restored = restoreText(translated.text, protectedText)
           if (restored !== undefined) rewritten = rewriteOutput(chunks, plan, restored)
-        }
+          if (!rewritten) outputFailureReason = { kind: "markers" }
+        } else if (translated.failure) outputFailureReason = translated.failure
+        if (!rewritten) failureDetail = translationFailureHint(outputFailureReason, languages.output)
       } finally {
-        await finishFeedback($, feedback, current, rewritten !== undefined, rewritten ? undefined : error)
+        await finishFeedback($, feedback, current, rewritten !== undefined, rewritten ? undefined : failureDetail,
+          rewritten ? undefined : createTranslationDiagnostic(options, "output", outputFailureReason))
       }
     }
     const lastText = chunks.findLastIndex(chunk => chunk.kind === "text")

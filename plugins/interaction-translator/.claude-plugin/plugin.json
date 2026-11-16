@@ -1,6 +1,6 @@
 {
   "name": "interaction-translator",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "types": "./types/index.d.ts",
   "description": "Translate prompts and Claude replies with independent input and output languages using an API or local Codex CLI.",
   "author": {
@@ -107,6 +107,12 @@
       "description": "仅 Codex CLI：默认沿用本地 Fast 设置；on 为翻译请求 Fast，off 为翻译关闭 Fast。与模型及推理等级独立，需要模型和账号支持，可能增加用量。",
       "options": ["跟随本地配置", "on", "off"],
       "default": "跟随本地配置"
+    },
+    "codex_timeout_seconds": {
+      "type": "number",
+      "title": "Codex translation timeout (seconds)",
+      "description": "仅 Codex CLI：每次输入、回复或选择面板翻译最多等待的秒数。默认 120，填写 1–600 的整数；长回复可设为 300 或 600。宿主上限为 600 秒。保存后重新加载插件。",
+      "default": 120
     },
     "api_url_selection": {
       "type": "string",

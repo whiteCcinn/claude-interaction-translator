@@ -10,7 +10,7 @@ for (const backend of ["api", "codex-cli"]) {
     on("turn.complete", (_, e) => ({ text: e.answer }))
     const sources: string[] = []
     on("process.run", async (_, e) => { sources.push(e.init?.stdin ?? ""); await clock.sleep(500); return { value: { exitCode: 0, stdout: "最终回复译文。", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } } })
-    on("http.fetch", async (_, e) => { sources.push(JSON.parse(e.init?.body ?? "{}").messages[1].content); await clock.sleep(500); return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "最终回复译文。" } }] }) } } })
+    on("http.fetch", async (_, e) => { sources.push(JSON.parse(typeof e.init?.body === "string" ? e.init.body : "").messages[1].content); await clock.sleep(500); return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "最终回复译文。" } }] }) } } })
     on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
     on("turn.step", async function* (_, e) {
       const text = e.index === 0 ? "Intermediate progress." : "Final English reply."

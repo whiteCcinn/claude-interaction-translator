@@ -21,7 +21,7 @@
 
 ## 1. 准备环境
 
-- 安装并登录 Claude Code。当前验证基线为 **Claude Code 2.1.316**；后续版本需兼容其原生 Mods API。
+- 安装并登录 Claude Code。当前验证基线为 **Claude Code 2.1.325**；后续版本需兼容其原生 Mods API。
 - 使用 Codex CLI 翻译时，在运行 Claude Code 的同一环境中安装并登录 Codex。当前调用方式在 Codex CLI 0.166.0 上验证。
 - 使用 API 翻译时，准备翻译服务的接口地址、模型 ID 和 API Key。Claude 自己的登录与模型配置继续按原来的方式使用。
 
@@ -96,6 +96,7 @@ claude plugin list
 | Codex translation model | 默认“跟随本地配置”；也可选模型预设或“手动输入” |
 | Codex reasoning effort | 默认“跟随本地配置”；可选 `low / medium / high / xhigh / max` 或手动值 |
 | Codex Fast mode | 默认“跟随本地配置”；`on` 请求 Fast，`off` 关闭本次翻译的 Fast |
+| Codex translation timeout (seconds) | `codex_timeout_seconds`，默认 `120`；填写 `1–600` 的整数，单位为秒；长回复可设为 `300` 或 `600` |
 
 选择“手动输入”后，在紧邻的“手动值”行填写内容。可执行文件只填路径，不加引号或参数；手动值行在未启用时可以留空。
 
@@ -109,7 +110,11 @@ claude plugin install interaction-translator@claude-interaction-translator \
   --config codex_reasoning_effort=low
 ```
 
-这些选项同时作用于输入和输出翻译，不修改本地 Codex 配置文件，也不修改 Claude 的主模型。每次 CLI 翻译使用临时会话，超时 120 秒；失败不会回退到 API。
+这些选项同时作用于输入、输出和选择面板翻译，不修改本地 Codex 配置文件，也不修改 Claude 的主模型。每次 CLI 翻译使用临时会话，默认最多等待 120 秒；失败不会回退到 API。
+
+长回复等待不足时，在 `/plugin configure interaction-translator@claude-interaction-translator` 中将 **Codex translation timeout (seconds)** 改为 `300` 或 `600`，保存后运行 `/reload-plugins` 或重启 Claude。也可在安装时传入 `--config codex_timeout_seconds=300`。这是每次 CLI 调用的时限，宿主上限为 600 秒；API 后端不使用此设置。
+
+输出失败会区分等待超时（显示实际秒数）、CLI 退出码、空译文、输出截断和路径／代码或选择面板校验失败。超时以本次调用报错且已达到等待时限为依据；旧版本的通用失败提示无法事后确定是否超时。增加等待时间只能改善等待不足，其他失败需要按具体原因处理。
 
 ### API 配置
 
@@ -157,6 +162,12 @@ claude plugin install interaction-translator@claude-interaction-translator \
 回复语言通过指令引导；保留原始回复并不保证模型生成的每个字符都是英文。显示翻译不改写已保存的会话内容，验证显示模式时建议使用新会话。
 
 输入翻译失败会停止本次提交；显示翻译失败会保留原文并提示错误，可按按钮重试，重试期间也保留原文。代码、路径和 URL 会保护并还原；纯代码或代码边界不完整的可见块保留原文。命令、空输入和以 `! / #` 开头的输入直接放行。
+
+失败提示会显示具体原因和固定错误码，例如 `TR_CLI_TIMEOUT`（CLI 等待超时）、`TR_CLI_EXIT`（CLI 异常退出）、`TR_API_HTTP`（接口 HTTP 错误）、`TR_API_REQUEST`（请求未能完成）、`TR_API_RESPONSE`（响应无效或为空）、`TR_TEXT_INVALID`（译文校验失败）。HTTP 错误会显示状态码，CLI 异常会显示退出码。
+
+需要反馈时，点击失败提示旁的 **复制错误信息 / Copy error**，把 JSON 摘要粘贴到问题反馈中。普通终端可按 `Ctrl+X`、`Tab` 聚焦输入框上方的按钮，再按 `c`；多条失败回复先用“上一条 / 下一条”选中目标。摘要包含错误码、翻译后端、失败阶段、可用的耗时、CLI 超时设置及状态码／退出码，不包含正文、译文、API Key、接口地址、模型、可执行文件路径、stderr 或响应体。复制失败会明确提示，仍可手动复制屏幕上的诊断摘要。信息只在当前会话内保留，不自动写入日志或上传；重试会清除本次旧错误。
+
+普通终端的原生选择面板无法操作插件按钮；失败时可手动复制面板上方的错误码和诊断摘要，全屏界面可使用复制按钮。反馈时还可补充插件版本、Claude Code 版本及复现步骤。
 
 如果宿主改变输入结构，导致已准备的译文无法对应正文，插件会显示错误，并向 Claude 交付英文重试提示，原始正文不会被发送。取消大量排队消息后若提示等待队列已满，请先处理剩余队列；仍无法发送时可重启会话。
 
@@ -234,6 +245,7 @@ claude --plugin-dir ./plugins/interaction-translator
 | --- | --- |
 | Claude 中找不到 Codex | 检查启动环境的 `PATH`，或在 Codex executable 的手动值中填写绝对路径 |
 | 翻译耗时较长 | 检查 CLI 继承的模型和推理等级；可指定翻译专用模型及 `low / medium`，再比较耗时 |
+| Codex 翻译等待超时 | 将 `codex_timeout_seconds` 从默认 `120` 调高为 `300` 或 `600`，保存后重新加载；上限 600 秒 |
 | 配置变化没有体现 | 确认使用正确的完整插件 ID，保存后重新加载或重启 Claude |
 | 出现两次翻译 | 检查已安装版和 `--plugin-dir` 开发版是否同时启用 |
 | `claude -p` 没有输出译文 | 默认 `display-only` 保留原文；需要无界面译文时显式选择 `conversation` |

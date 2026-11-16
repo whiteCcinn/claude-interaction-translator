@@ -6,7 +6,7 @@ The optional `output_trigger=final` keeps process output manual and automaticall
 
 For final mode followups, bounded identity tokens cover in-flight composer submissions; commit their monotonic accepted revision only after acceptance, so rejected submissions cannot supersede a running task. Read persistent `preparedInputs.pending`, including claimed entries until successful storage/discard, before final admission. This covers multiple queued prompts and hot reload without a second queue ledger. An unknown/read-failing/cancelled handoff stays conservative. New input or a new main step cancels pending/running automatic final entries without freeing an in-flight slot before settlement; stale results must fail identity/abort checks. Keep manual/auto/conversation behavior, headless passthrough and manual retries intact.
 
-Use Claude Code 2.1.316 for the current bidirectional translation validation baseline:
+Use Claude Code 2.1.325 for the current bidirectional translation validation baseline:
 
 ```bash
 claude plugin validate . --strict
@@ -16,7 +16,7 @@ claude plugin test plugins/interaction-translator
 
 Tests mock HTTP and process calls and do not require an API key, Codex installation, or Claude session authentication. Cover CLI invocation and failures without calling a real model in the automated suite.
 
-GitHub Actions runs these checks on `ubuntu-24.04` with Claude Code 2.1.316. The explicit image keeps the environment stable during GitHub's [ubuntu-latest migration](https://github.com/actions/runner-images/issues/14748).
+GitHub Actions runs these checks on `ubuntu-24.04` with Claude Code 2.1.325. The explicit image keeps the environment stable during GitHub's [ubuntu-latest migration](https://github.com/actions/runner-images/issues/14748).
 
 If a failed Actions job has no executed steps and reports `The job was not started because your account is locked due to a billing issue.`, the repository owner must resolve the account lock before rerunning the latest workflow. Follow GitHub's [locked-account guidance](https://docs.github.com/en/billing/how-tos/troubleshooting/locked-account); if Billing and licensing shows no issue to resolve, request a billing-lock review through GitHub Support. Runner selection does not remove this account-level restriction. Local checks establish local results only.
 

@@ -81,7 +81,7 @@ test("API translation ignores CLI overrides and retains the low default", { opti
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.model).toBe("glm-5.3-flash")
     expect(request.reasoning_effort).toBe("low")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "Hello." } }] }) } }

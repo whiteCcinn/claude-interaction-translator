@@ -1,6 +1,7 @@
 import type { EngineInterface, Timer } from "claude-code"
 import { LANGUAGES } from "./languages"
 import type { Language, SourceLanguage } from "./languages"
+import type { TranslationDiagnostic } from "./translation-diagnostics"
 
 export type Feedback = {
   stage: "input" | "output"
@@ -10,6 +11,7 @@ export type Feedback = {
   elapsed: number
   frame: number
   detail: string
+  diagnostic?: TranslationDiagnostic
   deliveryUnconfirmed?: boolean
   signal: AbortSignal
   timer?: Timer
@@ -61,7 +63,7 @@ export async function startFeedback($: EngineInterface, state: FeedbackState, st
   return handle
 }
 
-export async function finishFeedback($: EngineInterface, state: FeedbackState, handle: Feedback | undefined, succeeded: boolean, detail?: string) {
+export async function finishFeedback($: EngineInterface, state: FeedbackState, handle: Feedback | undefined, succeeded: boolean, detail?: string, diagnostic?: TranslationDiagnostic) {
   if (!handle) return
   handle.timer?.cancel()
   if (state.current !== handle) return handle.dispose()
@@ -73,6 +75,9 @@ export async function finishFeedback($: EngineInterface, state: FeedbackState, h
   handle.timer = undefined
   handle.elapsed = (now - handle.startedAt) / 1000
   handle.phase = succeeded ? "done" : "error"
+  handle.diagnostic = !succeeded && diagnostic ? { ...diagnostic,
+    ...(Number.isFinite(handle.elapsed) && handle.elapsed >= 0 ? { elapsedMs: Math.round(handle.elapsed * 1000) } : {}),
+  } : undefined
   if (detail !== undefined) handle.detail = detail.replace(/\s+/g, " ").slice(0, 180)
   $.ui.invalidate("ui.render")
   if (succeeded) state.hideTimer = $.clock.after(3000, () => clearFeedback($, state, handle))

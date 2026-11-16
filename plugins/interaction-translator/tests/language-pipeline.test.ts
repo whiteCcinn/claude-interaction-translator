@@ -18,7 +18,7 @@ test("default inbound route declares Chinese source and English Claude replies",
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("source language is Simplified Chinese")
     expect(request.messages[0].content).toContain("natural English")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "Hello." } }] }) } }
@@ -33,7 +33,7 @@ test("input, prompt, and Claude reply languages are independent", { options: { o
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("source language is Japanese")
     expect(request.messages[0].content).toContain("natural English")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "Hello." } }] }) } }
@@ -48,7 +48,7 @@ test("default output translates English replies into Chinese", { options: { outp
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("assistant response")
     expect(request.messages[0].content).toContain("natural Simplified Chinese")
     expect(request.max_tokens).toBe(8192)
@@ -111,7 +111,7 @@ test("response headings are translated without applying input command bypass", {
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("natural Japanese")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "# 結果\n完了しました。" } }] }) } }
   })
@@ -168,7 +168,7 @@ test("retry response indices do not merge failed and successful attempts", { opt
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[1].content).toBe("Complete response.")
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "完整回复。" } }] }) } }
   })
@@ -238,7 +238,7 @@ test("parallel responses keep their source text and translations separate", { op
   const clock = mock.clock(on)
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", async (_, e) => {
-    const request = JSON.parse(e.init?.body ?? "{}")
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     const first = request.messages[1].content === "First response."
     await clock.sleep(first ? 100 : 50)
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: first ? "第一条回复。" : "第二条回复。" } }] }) } }

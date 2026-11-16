@@ -4,6 +4,8 @@ export const FOLLOW_LOCAL = "跟随本地配置"
 export const MANUAL_INPUT = "手动输入"
 export const DEFAULT_API_URL = "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
 export const DEFAULT_API_MODEL = "glm-5.3-flash"
+export const DEFAULT_CODEX_TIMEOUT_SECONDS = 120
+export const MAX_CODEX_TIMEOUT_SECONDS = 600
 // Presets from the official Codex model catalog, checked 2026-11-01.
 // Keep the manual choice for private providers and future model IDs.
 export const MODEL_CHOICES: readonly string[] = [FOLLOW_LOCAL, "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", MANUAL_INPUT]
@@ -53,6 +55,10 @@ export function resolveConfiguration(options: PluginOptions, locked: ReadonlySet
     saved = { ...saved, [selector]: choice }
   }
   if (options.backend === "codex-cli") {
+    const timeout = options.codex_timeout_seconds ?? DEFAULT_CODEX_TIMEOUT_SECONDS
+    if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > MAX_CODEX_TIMEOUT_SECONDS) {
+      return { drop: "Codex translation timeout 必须为 1–600 的整数（秒）。", hint: "请将 codex_timeout_seconds 设为 1–600 的整数，保存后重新加载插件。" }
+    }
     const model = selectedText(options, saved, "codex_model_selection", "codex_model", FOLLOW_LOCAL, MODEL_CHOICES, "")
     const path = selectedText(options, saved, "codex_path_selection", "codex_path", FOLLOW_LOCAL, PATH_CHOICES, "codex")
     const modelChoice = selection(options, saved, "codex_model_selection", FOLLOW_LOCAL, MODEL_CHOICES)
@@ -66,7 +72,7 @@ export function resolveConfiguration(options: PluginOptions, locked: ReadonlySet
     else if (!["low", "medium", "high", "xhigh", "max"].includes(effort)) return missing("Codex reasoning effort")
     const fast = text(options.codex_fast_mode)
     if (fast && ![FOLLOW_LOCAL, "default", "on", "off"].includes(fast)) return missing("Codex Fast mode")
-    return { value: { ...options, codex_model: model, codex_path: path, codex_reasoning_effort: effort, codex_fast_mode: fast === "on" || fast === "off" ? fast : "default" } }
+    return { value: { ...options, codex_model: model, codex_path: path, codex_reasoning_effort: effort, codex_fast_mode: fast === "on" || fast === "off" ? fast : "default", codex_timeout_seconds: timeout } }
   }
   const url = selectedText(options, saved, "api_url_selection", "api_url", DEFAULT_API_URL, [DEFAULT_API_URL, MANUAL_INPUT], DEFAULT_API_URL)
   const model = selectedText(options, saved, "api_model_selection", "model", DEFAULT_API_MODEL, [DEFAULT_API_MODEL, MANUAL_INPUT], DEFAULT_API_MODEL)

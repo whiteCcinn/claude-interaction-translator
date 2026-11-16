@@ -4,7 +4,7 @@ import type { On, TurnStepChunk } from "claude-code"
 
 const step = { turnId: "feedback-turn", index: 0, model: "claude-test", messageCount: 1 }
 const stop: TurnStepChunk = { kind: "stop", stopReason: "end_turn", usage: null }
-const props = { hasSurvey: false, isWorking: true, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} }
+const props = { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} }
 
 async function collect<R>(stream: AsyncGenerator<TurnStepChunk, R>) {
   const chunks: TurnStepChunk[] = []

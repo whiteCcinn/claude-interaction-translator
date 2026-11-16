@@ -103,7 +103,7 @@ test("shows Codex CLI in interactive translation feedback", { options: cli }, as
   on("prompt.submit", (_, e) => ({ text: e.text }))
   const submission = $.prompt.submit({ text: "你好", origin: { kind: "composer" }, wait: false })
   await clock.settle()
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
   expect((await ui.find({ type: "Text", text: /翻译中/ }))?.text).toContain("Codex CLI")
   await clock.advance(500)
   expect((await submission).text).toBe("你好")

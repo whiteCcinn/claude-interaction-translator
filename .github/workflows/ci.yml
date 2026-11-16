@@ -17,7 +17,7 @@ jobs:
       - name: Install Claude Code
         run: |
           curl -fsSL https://claude.ai/install.sh -o "$RUNNER_TEMP/claude-install.sh"
-          bash "$RUNNER_TEMP/claude-install.sh" 2.1.316
+          bash "$RUNNER_TEMP/claude-install.sh" 2.1.325
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Validate marketplace and plugin
         run: |

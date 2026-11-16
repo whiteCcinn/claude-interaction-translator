@@ -84,6 +84,10 @@ codex login status
 
 在插件配置中把 **Translation backend** 设为 `codex-cli`，**Codex executable** 默认显示“跟随本地配置”，使用 Claude Code 进程的 `PATH` 中的 `codex`。命令不可见时选择“手动输入”，在下一行填写可执行文件的绝对路径。路径可以包含空格，不额外加引号，也不拼接参数。SSH 会话调用的是远端机器上的 CLI。
 
+**Codex translation timeout (seconds)**（`codex_timeout_seconds`）控制每次 CLI 输入、输出及选择面板翻译的最长等待时长，默认 120 秒，允许 1–600 的整数。长回复可设为 300 或 600；保存后重新加载插件或重启 Claude。600 秒是宿主进程接口的上限，API 后端不受此设置控制。新版错误提示会区分达到等待时限、CLI 退出、空输出、输出截断和译文校验失败；旧版的通用失败提示无法确定历史失败原因。
+
+遇到失败可点击 **复制错误信息 / Copy error**，取得包含错误码、后端、阶段、耗时和状态码／退出码的 JSON 摘要。`TR_API_HTTP` 会附 HTTP 状态（如 401、429、503），`TR_API_REQUEST` 表示请求未能完成，`TR_API_RESPONSE` 表示响应格式无效或译文为空。反馈信息不包含正文、凭据、接口地址、模型、文件路径和原始服务日志，不会自动上传；请在反馈时另附版本及复现步骤。
+
 CLI 模式不读取翻译 API Key，**API URL / Translation model / Reasoning effort** 均不参与该模式。CLI 使用下面的独立选项：
 
 | 字段 | 配置键 | 默认 | 用途 |

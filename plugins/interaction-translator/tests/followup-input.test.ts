@@ -27,7 +27,7 @@ for (const wait of [false, true]) {
     await $.turn.start({ turnId: "running", text: "Original task." })
     const generating = (async () => { for await (const _ of $.turn.step({ turnId: "running", index: 0, model: "fixture", messageCount: 1 })) {} })()
     await clock.settle()
-    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: true, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
     const source = "请继续说明并发问题。"
     const submitting = $.prompt.submit({ text: source, origin: { kind: "composer" }, wait, turnId: "running" })
     await clock.advance(300)
@@ -77,7 +77,7 @@ test("a refused delivery rewrite retains the handoff until a confirmed write", a
   let refuse = true
   on("session.append", { door: "delivery" }, (_, e, next) => next(refuse ? { ...e, message: { ...e.message, content: [{ type: "text", text: prefix + source + suffix }] } } : e))
   await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false, turnId: "running" })
-  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isWorking: true, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
   const append = () => $.session.append({ door: "delivery", origin: { kind: "composer" }, uuid: "refused-delivery", message: { type: "attachment", name: "queued_command", content: [{ type: "text", text: prefix + source + suffix }] } })
   expect((await append()).message?.content[0]?.text).toBe(prefix + source + suffix)
   const failure = (await ui.find({ type: "Text", text: /交付未确认/ }))?.text
