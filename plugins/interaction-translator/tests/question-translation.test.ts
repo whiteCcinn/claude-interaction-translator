@@ -1,6 +1,6 @@
 import { expect, test } from "claude-code/testing"
 import type { EngineInterface } from "claude-code"
-import { clearDisplay, closeQuestionDisplay, createDisplayState, displayEntry, MAX_DISPLAY_ENTRIES, MAX_DISPLAY_PENDING, scheduleDisplay } from "../hooks/display-translation"
+import { automaticQuestionDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayEntry, manualDisplay, MAX_DISPLAY_ENTRIES, MAX_DISPLAY_PENDING, scheduleDisplay } from "../hooks/display-translation"
 import { parseQuestions, prepareQuestionTranslation, questionSource, questionTranslationPrompt, restoreQuestionTranslation } from "../hooks/question-translation"
 
 const question = () => ({ question: "Where should jobs run?", header: "Runtime", multiSelect: false, options: [
@@ -37,6 +37,96 @@ function schedulerHarness() {
   } as unknown as EngineInterface
   return { engine, timers, order }
 }
+
+for (const backend of ["api", "codex-cli"]) {
+  for (const output_trigger of ["manual", "final", "auto"]) {
+    for (const output_mode of ["display-only", "conversation"]) {
+      test(`${backend} ${output_mode}/${output_trigger} automatically translates question panels without changing assistant policy`, async () => {
+        const { engine, timers, order } = schedulerHarness()
+        const state = createDisplayState()
+        state.activeSteps = 1
+        const options = { backend, output_mode, output_trigger }
+        const source = JSON.stringify([question()])
+        const entry = automaticQuestionDisplay(engine, options, {}, state, "terminal", "automatic-dialog", source, "en", "cn")
+        expect(entry?.kind).toBe("question")
+        expect(entry?.phase).toBe("pending")
+        expect(state.pending.size).toBe(1)
+        expect(timers.length).toBe(1)
+        expect(automaticQuestionDisplay(engine, options, {}, state, "terminal", "automatic-dialog", source, "en", "cn")).toBe(entry)
+        expect(timers.length).toBe(1)
+        await timers.shift()?.()
+        expect(entry?.phase).toBe("ready")
+        expect(order).toEqual(["question"])
+        const translated = parseQuestions(entry?.translated ?? "")?.[0]
+        expect(translated?.question).toBe("任务应该在哪里运行？")
+        expect(translated?.header).toBe("运行方式")
+        expect(translated?.options[0]?.label).toBe("Admin binary")
+        expect(translated?.options[0]?.description).toContain("Admin 可执行程序")
+        automaticQuestionDisplay(engine, options, {}, state, "terminal", "automatic-dialog", source, "en", "cn")
+        expect(timers.length).toBe(0)
+        expect(order.length).toBe(1)
+        expect(manualDisplay(options)).toBe(output_mode === "display-only" && output_trigger !== "auto")
+        expect(state.entries.size).toBe(1)
+      })
+    }
+  }
+}
+
+test("automatic question discovery skips same-language and closed dialogs", () => {
+  const { engine, timers } = schedulerHarness()
+  const state = createDisplayState()
+  const source = JSON.stringify([question()])
+  expect(automaticQuestionDisplay(engine, {}, {}, state, "terminal", "same-language", source, "cn", "cn")).toBe(undefined)
+  closeQuestionDisplay(state, "closed")
+  expect(automaticQuestionDisplay(engine, {}, {}, state, "terminal", "closed", source, "en", "cn")).toBe(undefined)
+  expect(timers.length).toBe(0)
+  expect(state.pending.size).toBe(0)
+})
+
+test("automatic question redraw does not retry a failed translation without an explicit action", async () => {
+  const { engine, timers } = schedulerHarness()
+  let calls = 0
+  engine.process.run = async () => { calls++; return { exitCode: 1, stdout: "", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  const state = createDisplayState()
+  const source = JSON.stringify([question()])
+  const entry = automaticQuestionDisplay(engine, { backend: "codex-cli", output_trigger: "final" }, {}, state, "terminal", "failed", source, "en", "cn")
+  await timers.shift()?.()
+  expect(entry?.phase).toBe("error")
+  automaticQuestionDisplay(engine, { backend: "codex-cli", output_trigger: "final" }, {}, state, "terminal", "failed", source, "en", "cn")
+  expect(timers.length).toBe(0)
+  expect(calls).toBe(1)
+  expect(entry?.diagnostic?.stage).toBe("question")
+})
+
+test("an existing idle question becomes automatic without starting idle assistant rows", async () => {
+  const { engine, timers, order } = schedulerHarness()
+  const state = createDisplayState()
+  state.activeSteps = 1
+  const source = JSON.stringify([question()])
+  const assistant = displayEntry(state, "terminal", "idle-assistant", "Original reply.", false, "cn", "assistant", false)
+  const idle = displayEntry(state, "terminal", "idle-question", source, false, "cn", "question", false)
+  const entry = automaticQuestionDisplay(engine, { backend: "codex-cli", output_trigger: "final" }, {}, state, "terminal", "idle-question", source, "en", "cn")
+  expect(entry).toBe(idle)
+  expect(entry?.phase).toBe("pending")
+  expect(entry?.manual).toBe(false)
+  await timers.shift()?.()
+  expect(entry?.phase).toBe("ready")
+  expect(assistant?.phase).toBe("idle")
+  expect(order).toEqual(["question"])
+})
+
+test("closing an automatically queued question prevents backend work and re-admission", async () => {
+  const { engine, timers, order } = schedulerHarness()
+  const state = createDisplayState()
+  const source = JSON.stringify([question()])
+  const entry = automaticQuestionDisplay(engine, { backend: "api", output_trigger: "manual" }, {}, state, "terminal", "close-before-start", source, "en", "cn")
+  closeQuestionDisplay(state, "close-before-start")
+  await timers.shift()?.()
+  expect(entry?.controller.signal.aborted).toBe(true)
+  expect(order.length).toBe(0)
+  expect(state.entries.size).toBe(0)
+  expect(automaticQuestionDisplay(engine, {}, {}, state, "terminal", "close-before-start", source, "en", "cn")).toBe(undefined)
+})
 
 test("dialog bundle translates wording while preserving original choice semantics and opaque fields", () => {
   const questions = [question()]

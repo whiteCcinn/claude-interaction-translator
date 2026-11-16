@@ -11,8 +11,8 @@ import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translatio
 import { translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 import { copyTranslationDiagnostic, createTranslationDiagnostic, diagnosticSummary } from "./translation-diagnostics"
-import { assistantDisplayAllowed, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, leaveDisplayViewport, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
-import { parseQuestions, questionSource } from "./question-translation"
+import { assistantDisplayAllowed, automaticQuestionDisplay, cancelFinalDisplay, clearDisplay, closeQuestionDisplay, createDisplayState, displayCodeOnly, displayEntry, displayFailure, displayOnly, displayQueueFailure, displaySourceAllowed, finalDisplay, hideDisplay, incompleteCode, leaveDisplayViewport, manualDisplay, manualDisplayChoices, manualDisplayTarget, recordFreshResponse, requestDisplay, retryDisplay, scheduleDisplay, selectManualDisplay } from "./display-translation"
+import { parseQuestions, questionSource, questionTranslationLoading } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
 import { canSkipInputTranslation } from "./input-language"
@@ -230,29 +230,27 @@ export function register(on: On, options: PluginOptions) {
     const source = questionSource(e.props.questions)
     if (source === undefined || !displaySourceAllowed(source)) return next(e)
     feedback.interactive = true
-    const manual = manualDisplay(options)
-    const entry = displayEntry(display, e.surface, e.requestId, source, false, languages.output, "question", !manual)
+    const entry = automaticQuestionDisplay($, options, configuration, display, e.surface, e.requestId, source, languages.reply, languages.output)
     if (entry?.phase === "ready" && entry.translated !== undefined) {
       const questions = parseQuestions(entry.translated)
       if (questions) return next({ ...e, props: { ...e.props, questions } })
     }
-    scheduleDisplay($, options, configuration, display, languages.reply, languages.output)
-    if (entry?.phase !== "error" && entry?.phase !== "idle") return next(e)
+    if (!entry) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    if (manual && e.surface === "terminal" && e.viewport?.isFullscreen === false) return Box({ flexDirection: "column", children: [
-      ...(entry.phase === "error" ? [Text({ color: "red", children: [displayFailure(languages.output, entry.translationFailure)] }),
-        ...(entry.diagnostic ? [Text({ dimColor: true, children: [diagnosticSummary(entry.diagnostic)] })] : [])] : []),
-      Text({ dimColor: true, children: ["普通终端的选择面板不支持点按翻译。可切换全屏，或在配置中将 Display translation trigger 设为 auto。"] }),
+    if (entry.phase === "pending" || entry.phase === "loading") return Box({ flexDirection: "column", children: [
+      Text({ dimColor: true, wrap: "truncate-end", children: [questionTranslationLoading(languages.output)] }),
       await next(e),
     ] })
+    if (entry.phase !== "error") return next(e)
+    const classic = e.surface === "terminal" && e.viewport?.isFullscreen === false
     return Box({ flexDirection: "column", children: [
-      ...(entry.phase === "error" ? [Text({ color: "red", wrap: "truncate-end", children: [entry.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output, entry.translationFailure)] })] : []),
-      ...(entry.phase === "error" && entry.diagnostic ? [
+      Text({ color: "red", wrap: "truncate-end", children: [entry.failure === "queue" ? displayQueueFailure(languages.output) : displayFailure(languages.output, entry.translationFailure)] }),
+      ...(entry.diagnostic ? [
         Text({ dimColor: true, wrap: "truncate-end", children: [diagnosticSummary(entry.diagnostic)] }),
-        Button({ key: "copy-question-error", label: "复制错误信息 / Copy error", onPress: () => entry.diagnostic ? copyTranslationDiagnostic($, e.surface, entry.diagnostic) : undefined }),
+        ...(!classic ? [Button({ key: "copy-question-error", label: "复制错误信息 / Copy error", onPress: () => entry.diagnostic ? copyTranslationDiagnostic($, e.surface, entry.diagnostic) : undefined })] : []),
       ] : []),
-      Button({ key: entry.phase === "error" ? "retry-question-translation" : "translate-question", label: entry.phase === "error" ? "重试翻译 / Retry" : "翻译问题 / Translate",
-        onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) }),
+      ...(!classic ? [Button({ key: "retry-question-translation", label: "重试翻译 / Retry",
+        onPress: () => requestDisplay($, options, configuration, display, entry, languages.reply, languages.output) })] : []),
       await next(e),
     ] })
   })

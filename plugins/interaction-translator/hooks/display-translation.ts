@@ -160,6 +160,19 @@ export function displayEntry(state: DisplayState, surface: RenderSurface, reques
   return entry
 }
 
+// Native question panels have their own automatic policy. The assistant's
+// manual/final trigger must never make a live question wait for a click.
+export function automaticQuestionDisplay($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, state: DisplayState, surface: RenderSurface, requestId: string, text: string, source: Language, target: Language): DisplayEntry | undefined {
+  if (source === target) return undefined
+  const entry = displayEntry(state, surface, requestId, text, false, target, "question", true)
+  if (entry?.phase === "idle") {
+    entry.manual = false
+    requestDisplay($, options, configuration, state, entry, source, target)
+  }
+  scheduleDisplay($, options, configuration, state, source, target)
+  return entry
+}
+
 export function hideDisplay(state: DisplayState, surface: RenderSurface, requestId: string, summary: boolean, target: Language) {
   const entry = state.entries.get(JSON.stringify([surface, requestId, summary, target, "assistant"]))
   if (!entry) return

@@ -7,6 +7,15 @@ type ChoiceQuestion = Record<string, unknown> & { question: string; header: stri
 type ProtectedField = { id: number; field: "question" | "header" | "label" | "description"; protectedText: ReturnType<typeof protectText> }
 export type PreparedQuestionTranslation = { text: string; original: ChoiceQuestion[]; fields: ProtectedField[]; prefix: string }
 
+export function questionTranslationLoading(target: Language): string {
+  return {
+    cn: "正在翻译问题和选项，请稍候…",
+    en: "Translating the question and options…",
+    jp: "質問と選択肢を翻訳しています…",
+    fr: "Traduction de la question et des choix en cours…",
+  }[target]
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
