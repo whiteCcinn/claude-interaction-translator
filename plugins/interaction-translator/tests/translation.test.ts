@@ -1,4 +1,5 @@
 import { expect, mock, test } from "claude-code/testing"
+import { segmentResponse } from "./segmented-fixtures"
 
 import { envToken, languageCode, LANGUAGES, protectText, restoreText, translatedText } from "../hooks/register"
 
@@ -43,7 +44,7 @@ test("loads a plugin-local API key and sends the OpenAI-compatible request", asy
     expect(request.reasoning_effort).toBe("low")
     expect(request.messages[0].content).toContain("natural English")
     expect(e.init?.headers?.Authorization).toBe("Bearer example-token")
-    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ finish_reason: "stop", message: { content: "Change the button. Keep __GLM_KEEP_0__." } }] }) } }
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ finish_reason: "stop", message: { content: segmentResponse(request.messages[1].content, "Change the button. Keep __GLM_KEEP_0__.") } }] }) } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text, context: e.context, origin: e.origin }))
   const result = await $.prompt.submit({ text: "修改按钮。保留 /tmp/demo.txt。", origin: { kind: "composer" }, wait: false })
@@ -75,8 +76,8 @@ test("preserves leading identifiers and allows an existing path at the start", a
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
     const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
-    expect(request.messages[1].content).toBe("请保留 __GLM_KEEP_0__。")
-    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: "__GLM_KEEP_0__を保持してください。" } }] }) } }
+    expect(JSON.parse(request.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["请保留", "。"])
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: segmentResponse(request.messages[1].content, "__GLM_KEEP_0__を保持してください。") } }] }) } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))
   const result = await $.prompt.submit({ text: "TASK_001: 请保留 /tmp/demo.txt。", origin: { kind: "sdk" }, wait: false })

@@ -163,7 +163,7 @@ for (const failure of ["exit", "empty", "truncated", "markers"] as const) {
     const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: "Read `/tmp/demo.txt`.", isFirstOfReply: true } })
     await clock.advance(300)
     const error = (await ui.find({ type: "Text", text: /输出翻译失败/ }))?.text
-    expect(error).toContain({ exit: "退出码 9", empty: "空译文", truncated: "截断", markers: "路径或代码" }[failure])
+    expect(error).toContain({ exit: "退出码 9", empty: "空译文", truncated: "截断", markers: "TR_SEGMENT_INVALID" }[failure])
     expect(error?.includes("超时")).toBe(false)
     expect(await ui.find({ text: /private diagnostics/ })).toBe(undefined)
     await ui.unmount()

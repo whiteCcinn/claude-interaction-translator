@@ -1,4 +1,5 @@
 import { expect, mock, test } from "claude-code/testing"
+import { segmentResponse } from "./segmented-fixtures"
 import type { EngineInterface, On, StreamHook, StreamNext, TurnStepChunk, TurnStepResult } from "claude-code"
 import { register } from "../hooks/register"
 
@@ -70,7 +71,7 @@ test("Codex output translation restores code split across response chunks", { op
     expect(e.argv.join(" ")).toContain("assistant response")
     expect(e.init?.stdin).toContain("__GLM_KEEP_0__")
     expect(e.init?.stdin?.includes("demo.go")).toBe(false)
-    return { value: { exitCode: 0, stdout: "查看 __GLM_KEEP_0__。\n__GLM_KEEP_1__", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: 0, stdout: segmentResponse(e.init?.stdin, "查看 __GLM_KEEP_0__。\n__GLM_KEEP_1__"), stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("turn.step", async function* (_, e) {
     yield { kind: "text", index: 0, text: "See `/tmp/de" }
@@ -92,7 +93,10 @@ test("output translation preserves tools, thinking, engine references and usage"
   ]
   const tools = [{ name: "Read", input: { file_path: "/tmp/demo.go" } }]
   on("env.get", () => ({ value: "example-token" }))
-  on("http.fetch", () => ({ value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "第一段。__GLM_KEEP_0__第二段。" } }] }) } }))
+  on("http.fetch", (_, e) => {
+    const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: segmentResponse(request.messages[1].content, "第一段。__GLM_KEEP_0__第二段。") } }] }) } }
+  })
   on("turn.step", async function* (_, e) {
     yield { kind: "text", index: 0, text: "First." }
     for (const chunk of protocol) yield chunk

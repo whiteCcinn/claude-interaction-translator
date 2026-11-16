@@ -9,11 +9,11 @@ const props = { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows:
 test("shareable reports contain only allowlisted fields and bounded numeric metadata", () => {
   const options: PluginOptions = { backend: "codex-cli", codex_timeout_seconds: 300, api_key: "private-key", api_url: "https://private.example", codex_path: "/private/codex", codex_model: "private-model" }
   const diagnostic = createTranslationDiagnostic(options, "output", { kind: "codex-exit", code: 9 }, 1234.6)
-  expect(diagnostic).toEqual({ reportVersion: 1, plugin: "interaction-translator", code: "TR_CLI_EXIT", backend: "codex-cli", stage: "output", elapsedMs: 1235, timeoutSeconds: 300, exitCode: 9 })
+  expect(diagnostic).toEqual({ reportVersion: 2, plugin: "interaction-translator", code: "TR_CLI_EXIT", backend: "codex-cli", stage: "output", elapsedMs: 1235, timeoutSeconds: 300, exitCode: 9 })
   expect(JSON.stringify(diagnostic).includes("private")).toBe(false)
   expect(diagnosticSummary(diagnostic)).toContain("TR_CLI_EXIT")
   expect(diagnosticSummary(diagnostic)).toContain("1.2s")
-  expect(createTranslationDiagnostic({}, "input", { kind: "api-http", status: 429 }, NaN)).toEqual({ reportVersion: 1, plugin: "interaction-translator", code: "TR_API_HTTP", backend: "api", stage: "input", httpStatus: 429 })
+  expect(createTranslationDiagnostic({}, "input", { kind: "api-http", status: 429 }, NaN)).toEqual({ reportVersion: 2, plugin: "interaction-translator", code: "TR_API_HTTP", backend: "api", stage: "input", httpStatus: 429 })
   expect(createTranslationDiagnostic({ backend: "codex-cli", codex_timeout_seconds: 601 }, "input", { kind: "configuration" }).timeoutSeconds).toBe(undefined)
 })
 

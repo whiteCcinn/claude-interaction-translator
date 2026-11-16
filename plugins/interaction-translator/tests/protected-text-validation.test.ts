@@ -59,7 +59,7 @@ test("the prompt inventories only opaque markers with exact-once requirements", 
 })
 
 for (const backend of ["api", "codex-cli"]) {
-  test(`${backend} input reports marker counts without submitting the original`, { options: { backend } }, async ($, on) => {
+  test(`${backend} input reports incomplete prose segments without submitting the original`, { options: { backend } }, async ($, on) => {
     mock.clock(on)
     on("config.list", () => ({ value: [] }))
     on("env.get", () => ({ value: "example-token" }))
@@ -71,17 +71,17 @@ for (const backend of ["api", "codex-cli"]) {
     on("ui.toast", () => ({ value: undefined }))
     const band = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 4, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
     const result = await $.prompt.submit({ text: "保留 `/private/a.txt` 和 `/private/b.txt`。", origin: { kind: "composer" }, wait: false })
-    expect(result.drop).toContain("protected paths or code")
+    expect(result.drop).toContain("TR_SEGMENT_INVALID")
     expect(result.text).toBe(undefined)
-    expect(await band.find({ type: "Text", text: /缺失 1/ })).toBeDefined()
+    expect(await band.find({ type: "Text", text: /仍缺 3/ })).toBeDefined()
     await band.press({ key: "copy-translation-error" })
     expect(JSON.parse(report).stage).toBe("input")
-    expect(JSON.parse(report).markerMissing).toBe(1)
+    expect(JSON.parse(report).segmentMissing).toBe(3)
     expect(report.includes("private")).toBe(false)
     await band.unmount()
   })
 
-  test(`${backend} output keeps the original and copies precise marker failure counts`, { options: { backend, output_trigger: "auto" } }, async ($, on) => {
+  test(`${backend} output keeps the original and copies precise segment failure counts`, { options: { backend, output_trigger: "auto" } }, async ($, on) => {
     const clock = mock.clock(on)
     on("config.list", () => ({ value: [] }))
     on("env.get", () => ({ value: "example-token" }))
@@ -90,13 +90,12 @@ for (const backend of ["api", "codex-cli"]) {
     on("http.fetch", (_, e) => {
       calls++
       const body = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
-      expect(body.messages[0].content).toContain("__GLM_KEEP_1__")
+      expect(body.messages[1].content).toContain("__GLM_KEEP_1__")
       return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: bad } }] }) } }
     })
     on("process.run", (_, e) => {
       calls++
-      const instructions = e.argv.find(x => x.startsWith("developer_instructions=")) ?? ""
-      expect(instructions).toContain("__GLM_KEEP_1__")
+      expect(e.init?.stdin).toContain("__GLM_KEEP_1__")
       return { value: { exitCode: 0, stdout: bad, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
     })
     on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
@@ -105,14 +104,14 @@ for (const backend of ["api", "codex-cli"]) {
     on("ui.toast", () => ({ value: undefined }))
     const row = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
     await clock.advance(300)
-    expect((await row.find({ type: "Text", text: /TR_TEXT_INVALID/ }))?.text).toContain("缺失 1")
+    expect((await row.find({ type: "Text", text: /TR_SEGMENT_INVALID/ }))?.text).toContain("仍缺 3")
     expect(await row.find({ type: "Markdown", text: source })).toBeDefined()
     await row.press({ key: "copy-output-error" })
-    expect(JSON.parse(report).markerMissing).toBe(1)
-    expect(JSON.parse(report).markerExpected).toBe(2)
-    expect(JSON.parse(report).markerObserved).toBe(1)
+    expect(JSON.parse(report).segmentMissing).toBe(3)
+    expect(JSON.parse(report).segmentExpected).toBe(3)
+    expect(JSON.parse(report).segmentObserved).toBe(0)
     expect(report.includes("private")).toBe(false)
-    expect(calls).toBe(1)
+    expect(calls).toBe(2)
     await row.unmount()
   })
 }

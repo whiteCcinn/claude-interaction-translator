@@ -1,6 +1,7 @@
 import type { Language } from "./languages"
 import { MAX_CODEX_TIMEOUT_SECONDS } from "./configuration"
 import type { MarkerValidation } from "./protected-text"
+import type { SegmentValidation } from "./protected-segments"
 
 // Only plugin-owned categories and numeric metadata may reach the display.
 // Never attach stderr, thrown messages, credentials, or source text here.
@@ -9,11 +10,12 @@ export type TranslationFailure =
   | { kind: "codex-exit"; code: number }
   | { kind: "api-http"; status: number }
   | { kind: "markers"; validation?: MarkerValidation }
+  | { kind: "segments"; validation: SegmentValidation }
   | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-handoff" | "queue" | "capacity" | "unknown" }
 
 const ERROR_CODES: Record<TranslationFailure["kind"], string> = {
   timeout: "TR_CLI_TIMEOUT", "codex-exit": "TR_CLI_EXIT", "codex-process": "TR_CLI_PROCESS",
-  empty: "TR_CLI_EMPTY", truncated: "TR_CLI_TRUNCATED", markers: "TR_TEXT_INVALID",
+  empty: "TR_CLI_EMPTY", truncated: "TR_CLI_TRUNCATED", markers: "TR_TEXT_INVALID", segments: "TR_SEGMENT_INVALID",
   configuration: "TR_CONFIG", credentials: "TR_API_KEY", "api-url": "TR_API_URL",
   "api-http": "TR_API_HTTP", "api-request": "TR_API_REQUEST", "api-response": "TR_API_RESPONSE", "api-length": "TR_API_LENGTH",
   "command-prefix": "TR_INPUT_PREFIX", "input-handoff": "TR_INPUT_HANDOFF", queue: "TR_QUEUE", capacity: "TR_CAPACITY", unknown: "TR_UNKNOWN",
@@ -23,6 +25,12 @@ export function translationFailureCode(failure: TranslationFailure): string { re
 
 export function translationFailureHint(failure: TranslationFailure, language: Language): string {
   switch (failure.kind) {
+    case "segments": return {
+      cn: `译文文本块不完整：预期 ${failure.validation.expected}，有效 ${failure.validation.observed}，仍缺 ${failure.validation.missing}。已尝试补译；原文和保护内容仍保留。请复制错误信息反馈。`,
+      en: `Translated text segments are incomplete: expected ${failure.validation.expected}, valid ${failure.validation.observed}, unresolved ${failure.validation.missing}. Repair was attempted; the original and protected content remain preserved. Copy the error information.`,
+      jp: `翻訳テキストが不完全です：期待 ${failure.validation.expected}、有効 ${failure.validation.observed}、未解決 ${failure.validation.missing}。補完を試みました。原文と保護内容は保持されています。`,
+      fr: `Segments de traduction incomplets : attendus ${failure.validation.expected}, valides ${failure.validation.observed}, manquants ${failure.validation.missing}. Une réparation a été tentée ; l’original et le contenu protégé sont conservés.`,
+    }[language]
     case "api-http": return {
       cn: `翻译接口返回 HTTP ${failure.status}。${failure.status === 401 || failure.status === 403 ? "请检查 API Key 和访问权限。" : failure.status === 429 ? "请求受限，请检查服务额度或稍后重试。" : failure.status >= 500 ? "服务端暂时异常，请稍后重试。" : "请检查接口地址、模型及请求配置。"}`,
       en: `Translation API returned HTTP ${failure.status}. Check credentials, access, service limits and provider availability, then retry.`,

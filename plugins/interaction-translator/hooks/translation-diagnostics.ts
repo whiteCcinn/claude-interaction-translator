@@ -4,7 +4,7 @@ import { translationFailureCode } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 
 export type TranslationDiagnostic = {
-  reportVersion: 1
+  reportVersion: 2
   plugin: "interaction-translator"
   code: string
   backend: "api" | "codex-cli"
@@ -18,12 +18,17 @@ export type TranslationDiagnostic = {
   markerMissing?: number
   markerDuplicate?: number
   markerUnexpected?: number
+  segmentExpected?: number
+  segmentObserved?: number
+  segmentMissing?: number
+  segmentDuplicate?: number
+  segmentUnexpected?: number
 }
 
 // Construct reports field-by-field; never spread options or provider errors.
 export function createTranslationDiagnostic(options: PluginOptions, stage: TranslationDiagnostic["stage"], failure: TranslationFailure, elapsedMs?: number): TranslationDiagnostic {
   const backend = options.backend === "codex-cli" ? "codex-cli" : "api"
-  const result: TranslationDiagnostic = { reportVersion: 1, plugin: "interaction-translator", code: translationFailureCode(failure), backend, stage }
+  const result: TranslationDiagnostic = { reportVersion: 2, plugin: "interaction-translator", code: translationFailureCode(failure), backend, stage }
   if (typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0) result.elapsedMs = Math.round(elapsedMs)
   if (backend === "codex-cli") {
     const seconds = options.codex_timeout_seconds
@@ -40,6 +45,14 @@ export function createTranslationDiagnostic(options: PluginOptions, stage: Trans
     if (Number.isSafeInteger(v.duplicate) && v.duplicate >= 0) result.markerDuplicate = v.duplicate
     if (Number.isSafeInteger(v.unexpected) && v.unexpected >= 0) result.markerUnexpected = v.unexpected
   }
+  if (failure.kind === "segments") {
+    const v = failure.validation
+    if (Number.isSafeInteger(v.expected) && v.expected >= 0) result.segmentExpected = v.expected
+    if (Number.isSafeInteger(v.observed) && v.observed >= 0) result.segmentObserved = v.observed
+    if (Number.isSafeInteger(v.missing) && v.missing >= 0) result.segmentMissing = v.missing
+    if (Number.isSafeInteger(v.duplicate) && v.duplicate >= 0) result.segmentDuplicate = v.duplicate
+    if (Number.isSafeInteger(v.unexpected) && v.unexpected >= 0) result.segmentUnexpected = v.unexpected
+  }
   return result
 }
 
@@ -50,6 +63,7 @@ export function diagnosticSummary(report: TranslationDiagnostic): string {
     ...(report.httpStatus === undefined ? [] : [`HTTP ${report.httpStatus}`]),
     ...(report.exitCode === undefined ? [] : [`exit=${report.exitCode}`]),
     ...(report.markerExpected === undefined ? [] : [`markers=${report.markerObserved}/${report.markerExpected}`, `missing=${report.markerMissing}`, `duplicate=${report.markerDuplicate}`, `unexpected=${report.markerUnexpected}`]),
+    ...(report.segmentExpected === undefined ? [] : [`segments=${report.segmentObserved}/${report.segmentExpected}`, `unresolved=${report.segmentMissing}`]),
   ].join(" · ")
 }
 

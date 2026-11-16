@@ -112,7 +112,7 @@ claude plugin install interaction-translator@claude-interaction-translator \
 
 这些选项同时作用于输入、输出和选择面板翻译，不修改本地 Codex 配置文件，也不修改 Claude 的主模型。每次 CLI 翻译使用临时会话，默认最多等待 120 秒；失败不会回退到 API。
 
-长回复等待不足时，在 `/plugin configure interaction-translator@claude-interaction-translator` 中将 **Codex translation timeout (seconds)** 改为 `300` 或 `600`，保存后运行 `/reload-plugins` 或重启 Claude。也可在安装时传入 `--config codex_timeout_seconds=300`。这是每次 CLI 调用的时限，宿主上限为 600 秒；API 后端不使用此设置。
+长回复等待不足时，在 `/plugin configure interaction-translator@claude-interaction-translator` 中将 **Codex translation timeout (seconds)** 改为 `300` 或 `600`，保存后运行 `/reload-plugins` 或重启 Claude。也可在安装时传入 `--config codex_timeout_seconds=300`。这是一次翻译及其补译共用的 CLI 等待预算，补译只使用剩余时间，宿主单次调用上限为 600 秒；API 后端不使用此设置。
 
 输出失败会区分等待超时（显示实际秒数）、CLI 退出码、空译文、输出截断和路径／代码或选择面板校验失败。超时以本次调用报错且已达到等待时限为依据；旧版本的通用失败提示无法事后确定是否超时。增加等待时间只能改善等待不足，其他失败需要按具体原因处理。
 
@@ -163,9 +163,11 @@ claude plugin install interaction-translator@claude-interaction-translator \
 
 输入翻译失败会停止本次提交；显示翻译失败会保留原文并提示错误，可按按钮重试，重试期间也保留原文。代码、路径和 URL 会保护并还原；纯代码或代码边界不完整的可见块保留原文。命令、空输入和以 `! / #` 开头的输入直接放行。
 
-失败提示会显示具体原因和固定错误码，例如 `TR_CLI_TIMEOUT`（CLI 等待超时）、`TR_CLI_EXIT`（CLI 异常退出）、`TR_API_HTTP`（接口 HTTP 错误）、`TR_API_REQUEST`（请求未能完成）、`TR_API_RESPONSE`（响应无效或为空）、`TR_TEXT_INVALID`（译文校验失败）。HTTP 错误会显示状态码，CLI 异常会显示退出码。
+失败提示会显示具体原因和固定错误码，例如 `TR_CLI_TIMEOUT`（CLI 等待超时）、`TR_CLI_EXIT`（CLI 异常退出）、`TR_API_HTTP`（接口 HTTP 错误）、`TR_API_REQUEST`（请求未能完成）、`TR_API_RESPONSE`（响应无效或为空）、`TR_SEGMENT_INVALID`（正文块补译后仍不完整）、`TR_TEXT_INVALID`（选择面板或响应边界校验失败）。HTTP 错误会显示状态码，CLI 异常会显示退出码。
 
-对于路径或代码的保护标记校验失败，提示和复制的摘要还会列出预期、收到、缺失、重复及未知／格式错误的标记数量。这类错误表示译文未通过校验，不代表等待超时；增加超时时长不能修复丢失的标记。插件会继续保留原文，需主动重试，不会为了恢复标记自动增加翻译请求。选择面板格式或响应边界校验失败仍使用通用校验提示。
+路径、URL、行内代码、代码块和响应边界由程序留在本地，只把带编号的正文间隙送去翻译，完成后按原顺序拼回保护内容。模型无需返回保护标记，因而不会再因漏抄一个标记使整段失败。输入、回复和选择面板共用此机制；只有代码或路径的字段直接保留原文。
+
+若模型漏返正文编号或返回冲突内容，插件最多补译一次，只请求尚未解决的正文块，已通过的译文保持不变；一次翻译最多处理 512 个正文块。补译后仍不完整会保留原文，并提示 `TR_SEGMENT_INVALID` 及预期、有效、未解决的数量。复制报告使用 `reportVersion: 2`，增加 `segmentExpected / segmentObserved / segmentMissing / segmentDuplicate / segmentUnexpected`。编号完整只能检查结构，不能保证模型对自然语言没有漏译或误译；网络、进程和服务错误仍按原规则提示，不自动重试。
 
 需要反馈时，点击失败提示旁的 **复制错误信息 / Copy error**，把 JSON 摘要粘贴到问题反馈中。普通终端可按 `Ctrl+X`、`Tab` 聚焦输入框上方的按钮，再按 `c`；多条失败回复先用“上一条 / 下一条”选中目标。摘要包含错误码、翻译后端、失败阶段、可用的耗时、CLI 超时设置及状态码／退出码，不包含正文、译文、API Key、接口地址、模型、可执行文件路径、stderr 或响应体。复制失败会明确提示，仍可手动复制屏幕上的诊断摘要。信息只在当前会话内保留，不自动写入日志或上传；重试会清除本次旧错误。
 

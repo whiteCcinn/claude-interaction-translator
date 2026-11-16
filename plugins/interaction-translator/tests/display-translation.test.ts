@@ -7,6 +7,37 @@ const step = { turnId: "display-only", index: 0, model: "claude-test", messageCo
 const stop: TurnStepChunk = { kind: "stop", stopReason: "end_turn", usage: null }
 
 for (const backend of ["api", "codex-cli"]) {
+  test(`${backend} retains the native original during missing-segment repair then assembles all local code`, { options: { output_trigger: "auto", backend } }, async ($, on) => {
+    const clock = mock.clock(on)
+    on("config.list", () => ({ value: [] }))
+    on("env.get", () => ({ value: "example-token" }))
+    let calls = 0
+    const translate = async (input: string) => {
+      calls++
+      const rows = JSON.parse(input) as { id: number }[]
+      if (calls === 1) return '[{"id":0,"text":"读取"},{"id":2,"text":"。"}]'
+      expect(rows.map(row => row.id)).toEqual([1])
+      await clock.sleep(1000)
+      return '[{"id":1,"text":"和"}]'
+    }
+    on("http.fetch", async (_, e) => ({ value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: await translate(JSON.parse(String(e.init?.body)).messages[1].content) } }] }) } }))
+    on("process.run", async (_, e) => ({ value: { exitCode: 0, stdout: await translate(e.init?.stdin ?? ""), stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }))
+    on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+    const source = "Read `first.go` and `second.go`."
+    const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
+    await clock.advance(300)
+    expect(calls).toBe(2)
+    expect(await ui.find({ type: "Markdown", text: source })).toBeDefined()
+    await clock.advance(1000)
+    expect(await ui.find({ type: "Markdown", text: "读取 `first.go` 和 `second.go`。" })).toBeDefined()
+    await ui.redraw({ text: source, isFirstOfReply: true })
+    await clock.advance(300)
+    expect(calls).toBe(2)
+    await ui.unmount()
+  })
+}
+
+for (const backend of ["api", "codex-cli"]) {
   test(`${backend} keeps the native original until its complete display translation is ready`, { options: { output_trigger: "auto", backend, claude_language: "fr" } }, async ($, on) => {
     const clock = mock.clock(on)
     on("config.list", () => ({ value: [] }))

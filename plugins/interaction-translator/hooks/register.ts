@@ -1,13 +1,14 @@
 import type { EngineInterface, On, PluginOptions, TurnStepChunk, TurnStepResult } from "claude-code"
 import { LANGUAGES, languageSettings, outputFailure, translationPrompt } from "./languages"
-import { protectText, protectedTranslationPrompt, restoreProtectedText } from "./protected-text"
+import { protectText } from "./protected-text"
 import { chunkBytes, failedOutputChunk, MAX_OUTPUT_BYTES, MAX_OUTPUT_CHUNKS, prepareOutput, rewriteOutput } from "./output-stream"
 import { clearFeedback, startFeedback, finishFeedback } from "./translation-feedback"
 import type { Feedback, FeedbackState } from "./translation-feedback"
 import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
-import { requestTranslation, TRANSLATION_FAILURE as FAILURE } from "./translation-client"
+import { TRANSLATION_FAILURE as FAILURE } from "./translation-client"
+import { translateProtectedText } from "./segmented-translation"
 import { translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 import { copyTranslationDiagnostic, createTranslationDiagnostic, diagnosticSummary } from "./translation-diagnostics"
@@ -387,8 +388,8 @@ export function register(on: On, options: PluginOptions) {
     try {
       if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
-      const result = skipTranslation ? { text: protectedText.text }
-        : await requestTranslation($, options, configuration, protectedTranslationPrompt(translationPrompt(code, languages.input), protectedText), protectedText.text, 1024, next.signal)
+      const result = skipTranslation ? { text: e.text.slice(leadingTag.length) }
+        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedText.values.length ? "segments" : "text"), protectedText, 1024, next.signal)
       if ("drop" in result) {
         inputFailure = result.failure ?? { kind: "unknown" }
         errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置。" : errorHint)
@@ -401,14 +402,6 @@ export function register(on: On, options: PluginOptions) {
         return { drop: "Translation cancelled; this prompt was not sent." }
       }
       if (!translated) return { drop: FAILURE }
-      const restored = restoreProtectedText(translated, protectedText)
-      if ("failure" in restored) {
-        translated = undefined
-        inputFailure = { kind: "markers", validation: restored.failure }
-        errorHint = translationFailureHint(inputFailure, "cn")
-        return { drop: "The translation did not preserve protected paths or code. This prompt was not sent; retry." }
-      }
-      translated = restored.text
       const introducedPrefix = /^[!/#]\S*/.exec(translated)?.[0]
       const originalAtStart = protectedText.values.some(value => translated?.startsWith(value))
       if (introducedPrefix && !e.text.includes(introducedPrefix) && !originalAtStart) {
@@ -537,13 +530,12 @@ export function register(on: On, options: PluginOptions) {
       let failureDetail = error
       let outputFailureReason: TranslationFailure = { kind: "unknown" }
       try {
-        const translated = await requestTranslation($, options, configuration,
-          protectedTranslationPrompt(translationPrompt(languages.output, languages.reply, "response"), protectedText), protectedText.text, 8192, next.signal)
+        const translated = await translateProtectedText($, options, configuration,
+          translationPrompt(languages.output, languages.reply, "response", protectedText.values.length ? "segments" : "text"), protectedText, 8192, next.signal)
         if (next.signal.aborted) return { ...result, answer: "" }
         if ("text" in translated) {
-          const restored = restoreProtectedText(translated.text, protectedText)
-          if ("text" in restored) rewritten = rewriteOutput(chunks, plan, restored.text)
-          if (!rewritten) outputFailureReason = { kind: "markers", ...("failure" in restored ? { validation: restored.failure } : {}) }
+          rewritten = rewriteOutput(chunks, plan, translated.text)
+          if (!rewritten) outputFailureReason = { kind: "markers" }
         } else if (translated.failure) outputFailureReason = translated.failure
         if (!rewritten) failureDetail = translationFailureHint(outputFailureReason, languages.output)
       } finally {

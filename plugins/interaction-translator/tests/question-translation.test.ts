@@ -98,6 +98,35 @@ test("automatic question redraw does not retry a failed translation without an e
   expect(entry?.diagnostic?.stage).toBe("question")
 })
 
+test("automatic question repair retains protected code in its own field and preserves submitted labels", async () => {
+  const { engine, timers } = schedulerHarness()
+  let calls = 0
+  engine.process.run = async (_argv, init) => {
+    calls++
+    const input = init?.stdin ?? ""
+    expect(input.includes("first.go")).toBe(false)
+    expect(input.includes("second.go")).toBe(false)
+    const rows = translated(input).map(row => ({ id: row.id, text: row.text.replaceAll("Use", "使用").replaceAll(".", "。") }))
+    if (calls === 1) rows.pop()
+    else expect(rows.length).toBe(1)
+    return { exitCode: 0, stdout: JSON.stringify(rows), stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  }
+  const q = question()
+  q.options[0]!.description = "Use `first.go`."
+  q.options[1]!.description = "Use `second.go`."
+  const state = createDisplayState()
+  const entry = automaticQuestionDisplay(engine, { backend: "codex-cli", output_trigger: "final" }, {}, state, "terminal", "protected-question", JSON.stringify([q]), "en", "cn")
+  await timers.shift()?.()
+  expect(entry?.phase).toBe("ready")
+  expect(calls).toBe(2)
+  const result = parseQuestions(entry?.translated ?? "")?.[0]
+  expect(result?.options[0]?.label).toBe("Admin binary")
+  expect(result?.options[1]?.label).toBe("Sidecar")
+  expect(result?.options[0]?.description).toContain("使用 `first.go`。")
+  expect(result?.options[1]?.description).toContain("使用 `second.go`。")
+  expect(result?.question).toBe("任务应该在哪里运行？")
+})
+
 test("an existing idle question becomes automatic without starting idle assistant rows", async () => {
   const { engine, timers, order } = schedulerHarness()
   const state = createDisplayState()

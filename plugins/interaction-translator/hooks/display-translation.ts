@@ -1,8 +1,8 @@
 import type { EngineInterface, PluginOptions, RenderSurface, Timer } from "claude-code"
 import type { Language } from "./languages"
 import { translationPrompt } from "./languages"
-import { protectText, protectedTranslationPrompt, restoreProtectedText } from "./protected-text"
-import { requestTranslation } from "./translation-client"
+import { protectText } from "./protected-text"
+import { translateProtectedFields, translateProtectedText } from "./segmented-translation"
 import { translationFailureCode, translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 import { createTranslationDiagnostic, diagnosticTime } from "./translation-diagnostics"
@@ -10,7 +10,7 @@ import type { TranslationDiagnostic } from "./translation-diagnostics"
 import type { ConfigurationState } from "./configuration-runtime"
 import { clearFeedback, finishFeedback, startFeedback } from "./translation-feedback"
 import type { Feedback, FeedbackState } from "./translation-feedback"
-import { prepareQuestionTranslation, questionTranslationPrompt, restoreQuestionTranslation } from "./question-translation"
+import { assembleQuestionFields, prepareQuestionTranslation, questionFieldsPrompt } from "./question-translation"
 
 export const MAX_DISPLAY_ENTRIES = 128
 export const MAX_DISPLAY_BYTES = 4 * 1024 * 1024
@@ -249,21 +249,19 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
     const question = entry.kind === "question" ? prepareQuestionTranslation(entry.source) : undefined
     if (entry.kind === "question" && !question) { entry.translationFailure = { kind: "markers" }; entry.phase = "error"; return }
     const protectedText = question ? undefined : protectText(entry.source)
-    const text = question?.text ?? protectedText?.text
-    if (text === undefined) { entry.phase = "error"; return }
-    const prompt = question ? questionTranslationPrompt(target, source) : protectedText
-      ? protectedTranslationPrompt(translationPrompt(target, source, "response"), protectedText) : translationPrompt(target, source, "response")
-    const result = await requestTranslation($, options, configuration, prompt, text, 8192, controller.signal)
+    const result = question
+      ? await translateProtectedFields($, options, configuration, questionFieldsPrompt(target, source), question.fields.map(field => ({ protectedText: field.protectedText, field: field.field })), 8192, controller.signal)
+      : protectedText ? await translateProtectedText($, options, configuration, translationPrompt(target, source, "response", protectedText.values.length ? "segments" : "text"), protectedText, 8192, controller.signal) : undefined
     if (state.entries.get(entry.key) !== entry || entry.controller !== controller || controller.signal.aborted) return
+    if (!result) { entry.phase = "error"; return }
     if ("drop" in result) {
       entry.translationFailure = result.failure
       entry.phase = "error"
       return
     }
-    const restored = protectedText ? restoreProtectedText(result.text, protectedText) : undefined
-    const translated = question ? restoreQuestionTranslation(result.text, question) : restored && "text" in restored ? restored.text : undefined
+    const translated = "texts" in result && question ? assembleQuestionFields(result.texts, question) : "text" in result ? result.text : undefined
     if (translated === undefined) {
-      entry.translationFailure = { kind: "markers", ...(restored && "failure" in restored ? { validation: restored.failure } : {}) }
+      entry.translationFailure = { kind: "markers" }
       entry.phase = "error"
       return
     }

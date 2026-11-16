@@ -74,11 +74,20 @@ export function restoreQuestionTranslation(text: string, prepared: PreparedQuest
     const field: unknown = value[index]
     if (!record(field) || Object.keys(field).length !== 3 || field.id !== expected.id || field.field !== expected.field || typeof field.text !== "string") return undefined
     const restored = restoreText(field.text, expected.protectedText)
-    if (restored === undefined || restored.includes(prepared.prefix) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(restored)) return undefined
-    if (expected.field !== "description" && !restored.trim()) return undefined
-    if (expected.field === "header" && (restored.length > 12 || /[\r\n\t]/.test(restored))) return undefined
-    if (!expected.protectedText.text && restored) return undefined
+    if (restored === undefined) return undefined
     texts.push(restored)
+  }
+  return assembleQuestionFields(texts, prepared)
+}
+
+export function assembleQuestionFields(texts: readonly string[], prepared: PreparedQuestionTranslation): string | undefined {
+  if (texts.length !== prepared.fields.length) return undefined
+  for (const [index, expected] of prepared.fields.entries()) {
+    const text = texts[index]
+    if (text === undefined || text.includes(prepared.prefix) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return undefined
+    if (expected.field !== "description" && !text.trim()) return undefined
+    if (expected.field === "header" && (text.length > 12 || /[\r\n\t]/.test(text))) return undefined
+    if (!expected.protectedText.text && text) return undefined
   }
   let cursor = 0
   const questions = prepared.original.map(q => {
@@ -107,5 +116,11 @@ export function questionTranslationPrompt(target: Language, source: Language): s
   return [translationPrompt(target, source, "response"),
     "The input is a JSON array of UI fields. Translate only each text value. Return only a JSON array with exactly the same id, field, order and count; no extra keys or prose.",
     "Keep header text concise, at most 12 characters. Keep empty strings empty. Preserve every placeholder containing GLM_Q_KEEP exactly in its own field; never move text or markers between fields.",
+  ].join("\n")
+}
+
+export function questionFieldsPrompt(target: Language, source: Language): string {
+  return [translationPrompt(target, source, "response", "segments"),
+    "Translate UI question, header, label and description fields. Each group is a separate field. Keep header wording concise, at most 12 characters. Preserve empty fields.",
   ].join("\n")
 }

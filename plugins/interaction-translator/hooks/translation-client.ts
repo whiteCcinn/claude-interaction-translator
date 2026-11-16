@@ -56,13 +56,13 @@ async function readToken($: EngineInterface, options: PluginOptions, signal: Abo
 
 export type TranslationResult = { text: string } | { drop: string; hint?: string; failure?: TranslationFailure }
 
-function translationFailure(failure: TranslationFailure): TranslationResult {
+export function translationFailure(failure: TranslationFailure): Exclude<TranslationResult, { text: string }> {
   return { drop: `[${translationFailureCode(failure)}] ${translationFailureHint(failure, "en")} This prompt was not sent.`, hint: translationFailureHint(failure, "cn"), failure }
 }
 
-async function translateWithCodex($: EngineInterface, options: PluginOptions, prompt: string, text: string, signal: AbortSignal): Promise<TranslationResult> {
+async function translateWithCodex($: EngineInterface, options: PluginOptions, prompt: string, text: string, signal: AbortSignal, remainingMs?: number): Promise<TranslationResult> {
   const timeoutSeconds = typeof options.codex_timeout_seconds === "number" ? options.codex_timeout_seconds : DEFAULT_CODEX_TIMEOUT_SECONDS
-  const timeoutMs = timeoutSeconds * 1000
+  const timeoutMs = Math.min(timeoutSeconds * 1000, typeof remainingMs === "number" && Number.isFinite(remainingMs) && remainingMs > 0 ? remainingMs : Infinity)
   let startedAt: number | undefined
   try {
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
@@ -109,14 +109,14 @@ async function translateWithCodex($: EngineInterface, options: PluginOptions, pr
   }
 }
 
-export async function requestTranslation($: EngineInterface, rawOptions: PluginOptions, configuration: ConfigurationState, prompt: string, text: string, maxTokens: number, signal: AbortSignal): Promise<TranslationResult> {
+export async function requestTranslation($: EngineInterface, rawOptions: PluginOptions, configuration: ConfigurationState, prompt: string, text: string, maxTokens: number, signal: AbortSignal, remainingMs?: number): Promise<TranslationResult> {
   if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
   const resolved = await effectiveConfiguration($, rawOptions, configuration)
   if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
   if ("drop" in resolved) return { ...resolved, drop: `[TR_CONFIG] ${resolved.drop}`, failure: { kind: "configuration" } }
   const options = resolved.value
   if (options.backend === "codex-cli") {
-    return translateWithCodex($, options, prompt, text, signal)
+    return translateWithCodex($, options, prompt, text, signal, remainingMs)
   }
   try {
     const token = await readToken($, options, signal)
