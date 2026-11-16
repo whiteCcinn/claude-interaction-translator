@@ -118,6 +118,8 @@ Output errors distinguish an elapsed deadline (including the configured seconds)
 
 Failures also show stable error codes such as `TR_CLI_TIMEOUT`, `TR_CLI_EXIT`, `TR_API_HTTP`, `TR_API_REQUEST`, `TR_API_RESPONSE`, and `TR_TEXT_INVALID`. Click **复制错误信息 / Copy error** beside a failure to copy a JSON report for troubleshooting. In classic terminals, focus the prompt-band controls with `Ctrl+X`, then `Tab`, and press `c`. Select the intended failed reply first when several are available.
 
+Protected-text failures include expected, observed, missing, duplicate and unexpected/malformed marker counts in both the hint and copied report. They indicate failed translation validation, not a timeout; a longer deadline cannot restore missing markers. Originals remain available, and retries stay explicit with no automatic extra translation request. Question-format and response-boundary failures retain the generic validation hint.
+
 Reports contain only the code, backend, stage, available elapsed time, configured CLI deadline, HTTP status and exit code. They omit source/translated text, credentials, endpoint URLs, model names, executable paths, stderr and response bodies. Clipboard refusal or errors are reported accurately; the on-screen diagnostic summary remains available for manual copying. Reports stay in session memory, are never logged or uploaded automatically, and clear on retry. Classic native question dialogs cannot focus plugin buttons; copy their visible code/summary manually or use fullscreen. Include your plugin/Claude Code versions and reproduction steps when reporting an issue.
 
 ### API settings

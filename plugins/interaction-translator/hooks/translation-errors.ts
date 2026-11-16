@@ -1,5 +1,6 @@
 import type { Language } from "./languages"
 import { MAX_CODEX_TIMEOUT_SECONDS } from "./configuration"
+import type { MarkerValidation } from "./protected-text"
 
 // Only plugin-owned categories and numeric metadata may reach the display.
 // Never attach stderr, thrown messages, credentials, or source text here.
@@ -7,7 +8,8 @@ export type TranslationFailure =
   | { kind: "timeout"; seconds: number }
   | { kind: "codex-exit"; code: number }
   | { kind: "api-http"; status: number }
-  | { kind: "codex-process" | "empty" | "truncated" | "markers" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-handoff" | "queue" | "capacity" | "unknown" }
+  | { kind: "markers"; validation?: MarkerValidation }
+  | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-handoff" | "queue" | "capacity" | "unknown" }
 
 const ERROR_CODES: Record<TranslationFailure["kind"], string> = {
   timeout: "TR_CLI_TIMEOUT", "codex-exit": "TR_CLI_EXIT", "codex-process": "TR_CLI_PROCESS",
@@ -121,11 +123,22 @@ export function translationFailureHint(failure: TranslationFailure, language: La
       jp: "Codex CLI の翻訳が途中で切れました。テキストを短くして再試行してください。",
       fr: "La traduction Codex CLI a été tronquée. Raccourcissez le texte, puis réessayez.",
     }[language]
-    case "markers": return {
+    case "markers": {
+      if (failure.validation) {
+        const v = failure.validation
+        return {
+          cn: `路径或代码的保护标记校验失败：预期 ${v.expected}，收到 ${v.observed}；缺失 ${v.missing}，重复 ${v.duplicate}，未知或格式错误 ${v.unexpected}。请重试；持续失败时复制错误信息反馈。`,
+          en: `Protected-token validation failed: expected ${v.expected}, observed ${v.observed}; missing ${v.missing}, duplicate ${v.duplicate}, unexpected or malformed ${v.unexpected}. Retry; copy error information if it persists.`,
+          jp: `保護トークンの検証に失敗しました：期待 ${v.expected}、受信 ${v.observed}、欠落 ${v.missing}、重複 ${v.duplicate}、不明または形式不正 ${v.unexpected}。再試行し、続く場合はエラー情報をコピーしてください。`,
+          fr: `Validation des marqueurs échouée : attendus ${v.expected}, reçus ${v.observed}, manquants ${v.missing}, doublons ${v.duplicate}, inconnus ou mal formés ${v.unexpected}. Réessayez ; copiez les informations si l’erreur persiste.`,
+        }[language]
+      }
+      return {
       cn: "译文校验失败：路径或代码未完整保留，或选择面板格式有误。请重试。",
       en: "Translation validation failed: protected paths or code were not preserved, or the question format was invalid. Retry.",
       jp: "翻訳の検証に失敗しました。パスやコードが保持されていないか、質問の形式が無効です。再試行してください。",
       fr: "La validation de la traduction a échoué : chemins ou code non conservés, ou format de question invalide. Réessayez.",
-    }[language]
+      }[language]
+    }
   }
 }

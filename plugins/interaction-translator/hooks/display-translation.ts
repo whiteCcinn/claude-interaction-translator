@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions, RenderSurface, Timer } from "claude-code"
 import type { Language } from "./languages"
 import { translationPrompt } from "./languages"
-import { protectText, restoreText } from "./protected-text"
+import { protectText, protectedTranslationPrompt, restoreProtectedText } from "./protected-text"
 import { requestTranslation } from "./translation-client"
 import { translationFailureCode, translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
@@ -238,7 +238,8 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
     const protectedText = question ? undefined : protectText(entry.source)
     const text = question?.text ?? protectedText?.text
     if (text === undefined) { entry.phase = "error"; return }
-    const prompt = question ? questionTranslationPrompt(target, source) : translationPrompt(target, source, "response")
+    const prompt = question ? questionTranslationPrompt(target, source) : protectedText
+      ? protectedTranslationPrompt(translationPrompt(target, source, "response"), protectedText) : translationPrompt(target, source, "response")
     const result = await requestTranslation($, options, configuration, prompt, text, 8192, controller.signal)
     if (state.entries.get(entry.key) !== entry || entry.controller !== controller || controller.signal.aborted) return
     if ("drop" in result) {
@@ -246,9 +247,13 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
       entry.phase = "error"
       return
     }
-    const translated = question ? restoreQuestionTranslation(result.text, question)
-      : protectedText ? restoreText(result.text, protectedText) : undefined
-    if (translated === undefined) { entry.translationFailure = { kind: "markers" }; entry.phase = "error"; return }
+    const restored = protectedText ? restoreProtectedText(result.text, protectedText) : undefined
+    const translated = question ? restoreQuestionTranslation(result.text, question) : restored && "text" in restored ? restored.text : undefined
+    if (translated === undefined) {
+      entry.translationFailure = { kind: "markers", ...(restored && "failure" in restored ? { validation: restored.failure } : {}) }
+      entry.phase = "error"
+      return
+    }
     const extra = encoder.encode(translated).byteLength
     if (extra > MAX_DISPLAY_SOURCE_BYTES || !makeRoom(state, extra, 0, entry)) { entry.translationFailure = { kind: "capacity" }; entry.phase = "error"; return }
     entry.translated = translated

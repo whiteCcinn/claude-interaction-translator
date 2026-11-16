@@ -13,6 +13,11 @@ export type TranslationDiagnostic = {
   timeoutSeconds?: number
   httpStatus?: number
   exitCode?: number
+  markerExpected?: number
+  markerObserved?: number
+  markerMissing?: number
+  markerDuplicate?: number
+  markerUnexpected?: number
 }
 
 // Construct reports field-by-field; never spread options or provider errors.
@@ -27,6 +32,14 @@ export function createTranslationDiagnostic(options: PluginOptions, stage: Trans
   }
   if (failure.kind === "api-http" && Number.isInteger(failure.status) && failure.status >= 100 && failure.status <= 599) result.httpStatus = failure.status
   if (failure.kind === "codex-exit" && Number.isSafeInteger(failure.code)) result.exitCode = failure.code
+  if (failure.kind === "markers" && failure.validation) {
+    const v = failure.validation
+    if (Number.isSafeInteger(v.expected) && v.expected >= 0) result.markerExpected = v.expected
+    if (Number.isSafeInteger(v.observed) && v.observed >= 0) result.markerObserved = v.observed
+    if (Number.isSafeInteger(v.missing) && v.missing >= 0) result.markerMissing = v.missing
+    if (Number.isSafeInteger(v.duplicate) && v.duplicate >= 0) result.markerDuplicate = v.duplicate
+    if (Number.isSafeInteger(v.unexpected) && v.unexpected >= 0) result.markerUnexpected = v.unexpected
+  }
   return result
 }
 
@@ -36,6 +49,7 @@ export function diagnosticSummary(report: TranslationDiagnostic): string {
     ...(report.timeoutSeconds === undefined ? [] : [`timeout=${report.timeoutSeconds}s`]),
     ...(report.httpStatus === undefined ? [] : [`HTTP ${report.httpStatus}`]),
     ...(report.exitCode === undefined ? [] : [`exit=${report.exitCode}`]),
+    ...(report.markerExpected === undefined ? [] : [`markers=${report.markerObserved}/${report.markerExpected}`, `missing=${report.markerMissing}`, `duplicate=${report.markerDuplicate}`, `unexpected=${report.markerUnexpected}`]),
   ].join(" · ")
 }
 
