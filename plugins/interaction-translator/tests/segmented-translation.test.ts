@@ -25,11 +25,11 @@ test("34 protected values survive without the model returning a single marker", 
   expect(response.includes("private")).toBe(false)
 })
 
-test("reordered gap IDs and empty gaps support grammar around fixed code", () => {
+test("reordered IDs keep every translated phrase on its own side of fixed code", () => {
   const plan = prepareProtectedBatch([{ protectedText: protectText("请保留 `/tmp/demo.txt`。"), field: "instructions" }])
   if (!plan) throw new Error("Missing plan")
-  const parsed = parseSegmentResponse('[{"id":1,"text":"を保持してください。"},{"id":0,"text":""}]', plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["`/tmp/demo.txt`を保持してください。"])
+  const parsed = parseSegmentResponse('[{"id":1,"text":"。"},{"id":0,"text":"保持してください："}]', plan)
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["保持してください： `/tmp/demo.txt`。"])
 })
 
 test("conflicting duplicates, unknown IDs and copied context are not blindly accepted", () => {
@@ -41,25 +41,27 @@ test("conflicting duplicates, unknown IDs and copied context are not blindly acc
   expect(assembleProtectedBatch(plan, parsed.values)).toBe(undefined)
 })
 
-test("the structured context never includes original code, links or paths", () => {
+test("the structured request excludes full-answer context and protected code, links or paths", () => {
   const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/private/a` and https://private.example/x.\n```sh\necho secret\n```"), field: "response" }])
   if (!plan) throw new Error("Missing plan")
   const payload = segmentRequest(plan)
   expect(payload.includes("private")).toBe(false)
   expect(payload.includes("secret")).toBe(false)
+  expect(payload.includes("context")).toBe(false)
+  expect(payload.includes("GLM_KEEP")).toBe(false)
 })
 
 test("only a missing gap is repaired and already accepted prose is retained", async () => {
   let calls = 0
   const $ = engine(async (_, init) => {
-    const rows = JSON.parse(init?.stdin ?? "") as { id: number; text: string; context?: string }[]
+    const rows = JSON.parse(init?.stdin ?? "") as { id: number; text: string }[]
     calls++
     if (calls === 1) {
       expect(rows.length).toBe(3)
       return { exitCode: 0, stdout: '[{"id":0,"text":"读取"},{"id":2,"text":"。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
     }
     expect(rows.map(r => r.id)).toEqual([1])
-    expect(rows[0]?.context).toBeDefined()
+    expect(rows).toEqual([{ id: 1, field: "prose", text: "and" }])
     return { exitCode: 0, stdout: '[{"id":1,"text":"和"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
   })
   const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText("Read `/tmp/a` and `/tmp/b`."), 8192, new AbortController().signal)
@@ -157,7 +159,7 @@ test("a complete but empty prose field is retried and then rejected", async () =
   const $ = engine(async () => { calls++; return { exitCode: 0, stdout: '[{"id":0,"text":""},{"id":1,"text":"。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } })
   const result = await translateProtectedText($, cli, {}, "Translate", protectText("Read `/tmp/a`."), 8192, new AbortController().signal)
   expect("drop" in result && result.drop).toContain("TR_SEGMENT_INVALID")
-  expect("failure" in result && result.failure?.kind === "segments" && result.failure.validation.missing).toBe(2)
+  expect("failure" in result && result.failure?.kind === "segments" && result.failure.validation.missing).toBe(1)
   expect(calls).toBe(2)
 })
 

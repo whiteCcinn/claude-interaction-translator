@@ -31,8 +31,8 @@ test("preserves custom executable paths and keeps shell syntax exclusively in st
     expect(e.argv[0]).toBe("/opt/My Tools/codex")
     expect(e.argv.join(" ")).toContain("natural French")
     expect(e.argv.join(" ").includes("SHOULD_NOT_RUN")).toBe(false)
-    expect(e.init?.stdin).toBe(source)
-    return { value: { exitCode: 0, stdout: "Veuillez traduire : $(touch SHOULD_NOT_RUN)\nDeuxième ligne", stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+    expect(JSON.parse(e.init?.stdin ?? "").map((row: { text: string }) => row.text)).toEqual(source.split("\n"))
+    return { value: { exitCode: 0, stdout: '[{"id":0,"text":"Veuillez traduire : $(touch SHOULD_NOT_RUN)"},{"id":1,"text":"Deuxième ligne"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text, context: e.context }))
   const result = await $.prompt.submit({ text: source, origin: { kind: "sdk" }, wait: false })

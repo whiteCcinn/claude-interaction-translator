@@ -77,11 +77,11 @@ test("preserves leading identifiers and allows an existing path at the start", a
   on("http.fetch", (_, e) => {
     const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(JSON.parse(request.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["请保留", "。"])
-    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: segmentResponse(request.messages[1].content, "__GLM_KEEP_0__を保持してください。") } }] }) } }
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: segmentResponse(request.messages[1].content, "保持してください：__GLM_KEEP_0__。") } }] }) } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))
   const result = await $.prompt.submit({ text: "TASK_001: 请保留 /tmp/demo.txt。", origin: { kind: "sdk" }, wait: false })
-  expect(result.text).toBe("TASK_001: /tmp/demo.txtを保持してください。")
+  expect(result.text).toBe("TASK_001: 保持してください： /tmp/demo.txt。")
 })
 
 test("restores paths, URLs, and code exactly and rejects lost markers", () => {

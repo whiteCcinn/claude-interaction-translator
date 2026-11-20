@@ -2,7 +2,7 @@ import type { EngineInterface, PluginOptions, RenderSurface, Timer } from "claud
 import type { Language } from "./languages"
 import { translationPrompt } from "./languages"
 import { protectText } from "./protected-text"
-import { translateProtectedFields, translateProtectedText } from "./segmented-translation"
+import { protectedTextFormat, translateProtectedFields, translateProtectedText } from "./segmented-translation"
 import { translationFailureCode, translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 import { createTranslationDiagnostic, diagnosticTime } from "./translation-diagnostics"
@@ -251,7 +251,7 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
     const protectedText = question ? undefined : protectText(entry.source)
     const result = question
       ? await translateProtectedFields($, options, configuration, questionFieldsPrompt(target, source), question.fields.map(field => ({ protectedText: field.protectedText, field: field.field })), 8192, controller.signal)
-      : protectedText ? await translateProtectedText($, options, configuration, translationPrompt(target, source, "response", protectedText.values.length ? "segments" : "text"), protectedText, 8192, controller.signal) : undefined
+      : protectedText ? await translateProtectedText($, options, configuration, translationPrompt(target, source, "response", protectedTextFormat(protectedText)), protectedText, 8192, controller.signal) : undefined
     if (state.entries.get(entry.key) !== entry || entry.controller !== controller || controller.signal.aborted) return
     if (!result) { entry.phase = "error"; return }
     if ("drop" in result) {

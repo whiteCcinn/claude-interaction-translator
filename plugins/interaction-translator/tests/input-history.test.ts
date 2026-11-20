@@ -69,12 +69,12 @@ test("expanded text blocks are matched as a complete prompt without merging unre
   mock.clock(on)
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "test-token" }))
-  on("http.fetch", () => ({ value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "Two paragraphs." } }] }) } }))
+  on("http.fetch", () => ({ value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: '[{"id":0,"text":"First paragraph."},{"id":1,"text":"Second paragraph."}]' } }] }) } }))
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))
   await $.prompt.submit({ text: "第一段\n第二段", origin: { kind: "composer" }, wait: false })
   const row = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "expanded-row", message: { type: "user", content: [{ type: "text", text: "第一段" }, { type: "text", text: "第二段" }] } })
   // The native append validator removes empty text blocks.
-  expect(row.message?.content).toEqual([{ type: "text", text: "Two paragraphs." }])
+  expect(row.message?.content).toEqual([{ type: "text", text: "First paragraph.\nSecond paragraph." }])
 })
 
 test("an unmatched accepted prompt fails visibly without forwarding source text", async ($, on) => {

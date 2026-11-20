@@ -90,12 +90,12 @@ for (const backend of ["api", "codex-cli"]) {
     on("http.fetch", (_, e) => {
       calls++
       const body = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
-      expect(body.messages[1].content).toContain("__GLM_KEEP_1__")
+      expect(JSON.parse(body.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["Read", "and", "."])
       return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: bad } }] }) } }
     })
     on("process.run", (_, e) => {
       calls++
-      expect(e.init?.stdin).toContain("__GLM_KEEP_1__")
+      expect(JSON.parse(e.init?.stdin ?? "").map((row: { text: string }) => row.text)).toEqual(["Read", "and", "."])
       return { value: { exitCode: 0, stdout: bad, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
     })
     on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))

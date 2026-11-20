@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions } from "claude-code"
 import type { ConfigurationState } from "./configuration-runtime"
 import type { protectText } from "./protected-text"
-import { assembleProtectedBatch, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
+import { assembleProtectedBatch, hasTranslationStructure, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
 import type { ProtectedField } from "./protected-segments"
 import { requestTranslation, translationFailure } from "./translation-client"
 import type { TranslationResult } from "./translation-client"
@@ -9,11 +9,12 @@ import { diagnosticTime } from "./translation-diagnostics"
 import { DEFAULT_CODEX_TIMEOUT_SECONDS } from "./configuration"
 
 const SEGMENT_INSTRUCTIONS = [
-  "Translate a JSON array of numbered prose gaps. Return only a JSON array of {id,text}, with every requested id exactly once, including empty text values.",
-  "Each group is one field. Read context only to understand grammar; translate the text values and distribute prose across gaps within that group as needed. Never move content between groups.",
-  "Protected code, paths, URLs and boundary nodes are retained by the program between gaps. Do NOT return placeholders, protected nodes, context, or accepted records; they are not part of any translated text value.",
-  "Keep Markdown and line breaks. Do not add surrounding whitespace: the program retains the original spacing. Keep header fields concise (at most 12 characters).",
-  "On a repair request, return only the requested unresolved ids and preserve the already accepted translations shown as read-only context. Never output an empty translation for an entire nonempty prose field.",
+  "Translate a JSON array of numbered nonempty prose spans. Return only a JSON array of {id,text}, with every requested id exactly once.",
+  "Translate ALL content of EACH text value faithfully. Never summarize, omit, merge or move prose between ids. Every requested span must have a nonempty translation; a span containing words must retain words, not just punctuation.",
+  "Translate each requested text value itself as an independent fragment. Some spans are sentence fragments: use a colon or appositional phrasing if needed to fit the SAME span. Do not reconstruct a full sentence, guess adjacent protected contents or change grammatical roles.",
+  "Protected code, paths, URLs, boundary nodes, Markdown delimiters and line breaks are retained by the program between spans. Do NOT return placeholders, protected nodes, context, or accepted records; they are not part of any translated text value.",
+  "Do not return line breaks, table pipes or emphasis delimiters inside text values. Do not add surrounding whitespace: the program retains the original spacing. Keep header fields concise (at most 12 characters).",
+  "On a repair request, return only the requested unresolved ids. Other translations are retained locally and must not be repeated.",
 ].join("\n")
 
 export async function translateProtectedFields($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, fields: readonly ProtectedField[], maxTokens: number, signal: AbortSignal): Promise<{ texts: string[] } | Exclude<TranslationResult, { text: string }>> {
@@ -42,7 +43,7 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     const started = attempt === 0 ? diagnosticTime($) : undefined
     // Start the first request before awaiting its diagnostic clock so a
     // prioritized question cannot be overtaken by a plain assistant request.
-    const pending = requestTranslation($, options, configuration, `${prompt}\n${SEGMENT_INSTRUCTIONS}`, segmentRequest(plan, ids, values), Math.min(8192, maxTokens + ids.length * 24), signal, remainingMs)
+    const pending = requestTranslation($, options, configuration, `${prompt}\n${SEGMENT_INSTRUCTIONS}`, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, remainingMs)
     if (started) startedAt = await started
     const result = await pending
     if ("drop" in result) return result
@@ -58,8 +59,12 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
   return translationFailure({ kind: "segments", validation: { ...last, expected: plan.segments.length, observed: values.size, missing: ids.length } })
 }
 
+export function protectedTextFormat(protectedText: ReturnType<typeof protectText>): "text" | "segments" {
+  return protectedText.values.length || hasTranslationStructure(protectedText.text) ? "segments" : "text"
+}
+
 export async function translateProtectedText($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, protectedText: ReturnType<typeof protectText>, maxTokens: number, signal: AbortSignal): Promise<TranslationResult> {
-  if (!protectedText.values.length) return requestTranslation($, options, configuration, prompt, protectedText.text, maxTokens, signal)
+  if (protectedTextFormat(protectedText) === "text") return requestTranslation($, options, configuration, prompt, protectedText.text, maxTokens, signal)
   const result = await translateProtectedFields($, options, configuration, prompt, [{ protectedText, field: "prose" }], maxTokens, signal)
   if (!("texts" in result)) return result
   return result.texts[0] === undefined ? translationFailure({ kind: "unknown" }) : { text: result.texts[0] }

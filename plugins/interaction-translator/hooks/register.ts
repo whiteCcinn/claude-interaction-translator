@@ -8,7 +8,7 @@ import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
 import { TRANSLATION_FAILURE as FAILURE } from "./translation-client"
-import { translateProtectedText } from "./segmented-translation"
+import { protectedTextFormat, translateProtectedText } from "./segmented-translation"
 import { translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
 import { copyTranslationDiagnostic, createTranslationDiagnostic, diagnosticSummary } from "./translation-diagnostics"
@@ -389,7 +389,7 @@ export function register(on: On, options: PluginOptions) {
       if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
       const result = skipTranslation ? { text: e.text.slice(leadingTag.length) }
-        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedText.values.length ? "segments" : "text"), protectedText, 1024, next.signal)
+        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedTextFormat(protectedText)), protectedText, 1024, next.signal)
       if ("drop" in result) {
         inputFailure = result.failure ?? { kind: "unknown" }
         errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置。" : errorHint)
@@ -531,7 +531,7 @@ export function register(on: On, options: PluginOptions) {
       let outputFailureReason: TranslationFailure = { kind: "unknown" }
       try {
         const translated = await translateProtectedText($, options, configuration,
-          translationPrompt(languages.output, languages.reply, "response", protectedText.values.length ? "segments" : "text"), protectedText, 8192, next.signal)
+          translationPrompt(languages.output, languages.reply, "response", protectedTextFormat(protectedText)), protectedText, 8192, next.signal)
         if (next.signal.aborted) return { ...result, answer: "" }
         if ("text" in translated) {
           rewritten = rewriteOutput(chunks, plan, translated.text)

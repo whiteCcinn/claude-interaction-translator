@@ -2,16 +2,35 @@ import type { protectText } from "./protected-text"
 
 type ProtectedText = ReturnType<typeof protectText>
 export type ProtectedField = { protectedText: ProtectedText; field: string }
-type Piece = string | { id: number; leading: string; trailing: string; hadText: boolean }
-type Segment = { id: number; group: number; gap: number; field: string; text: string }
-export type ProtectedBatch = { fields: { protectedText: ProtectedText; pieces: Piece[]; ids: number[] }[]; segments: Segment[]; prefixes: string[] }
+type Piece = string | { id: number; leading: string; trailing: string }
+type Segment = { id: number; field: string; text: string }
+export type ProtectedBatch = { fields: { pieces: Piece[] }[]; segments: Segment[]; prefixes: string[] }
 export type SegmentValidation = { expected: number; observed: number; missing: number; duplicate: number; unexpected: number }
 export const MAX_TEXT_SEGMENTS = 512
 const meaningful = /[\p{L}\p{N}]/u
+const spanPrefix = /^[ \t]*(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|(?:>[ \t]*)+)/
+
+// Match only local syntax, never protected values. In particular, line endings
+// and table pipes must not depend on a model preserving an otherwise empty gap.
+// Escaped delimiters stay together so a literal pipe cannot become a table cell.
+function structurePattern(): RegExp {
+  return /\r\n|[\r\n\t]|\\[\\|*_~]|[|*]|__|~~/g
+}
+
+export function hasTranslationStructure(text: string): boolean { return structurePattern().test(text) || spanPrefix.test(text) }
+
+function proseSize(text: string): number { return text.replace(/[^\p{L}\p{N}]/gu, "").length }
+
+function validSegmentText(segment: Segment, value: string): boolean {
+  // English/French -> CJK may contract heavily. This deliberately generous
+  // floor catches near-empty summaries, not arbitrary semantic omissions.
+  return Boolean(value.trim()) && !hasTranslationStructure(value)
+    && proseSize(value) >= Math.ceil(proseSize(segment.text) / 8)
+}
 
 export function prepareProtectedBatch(fields: readonly ProtectedField[]): ProtectedBatch | undefined {
   const plan: ProtectedBatch = { fields: [], segments: [], prefixes: [] }
-  for (const [group, source] of fields.entries()) {
+  for (const source of fields) {
     const p = source.protectedText
     if (!p.prefix) return undefined
     plan.prefixes.push(p.prefix)
@@ -32,40 +51,53 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[]): Protec
     if (keeps.length !== p.values.length) return undefined
     const translate = gaps.some(gap => meaningful.test(gap))
     const pieces: Piece[] = []
-    const ids: number[] = []
     for (const [gap, raw] of gaps.entries()) {
       if (!translate) pieces.push(raw)
       else {
-        if (plan.segments.length >= MAX_TEXT_SEGMENTS) return undefined
-        const leading = /^\s*/u.exec(raw)?.[0] ?? ""
-        const rest = raw.slice(leading.length)
-        const trailing = /\s*$/u.exec(rest)?.[0] ?? ""
-        const text = rest.slice(0, rest.length - trailing.length)
-        const id = plan.segments.length
-        plan.segments.push({ id, group, gap, field: source.field, text })
-        pieces.push({ id, leading, trailing, hadText: Boolean(text) })
-        ids.push(id)
+        let offset = 0
+        const addText = (span: string): boolean => {
+          // A numbered heading can begin inside emphasis, e.g. **1. Title**.
+          // Identify prefixes after every local delimiter, not just raw lines.
+          const prefix = spanPrefix.exec(span)?.[0]
+          if (prefix) { pieces.push(prefix); span = span.slice(prefix.length) }
+          const leading = /^\s*/u.exec(span)?.[0] ?? ""
+          const rest = span.slice(leading.length)
+          const trailing = /\s*$/u.exec(rest)?.[0] ?? ""
+          const text = rest.slice(0, rest.length - trailing.length)
+          // Blank gaps and table-rule cells have no translatable prose.
+          if (!text || /^:?-{3,}:?$/.test(text)) { pieces.push(span); return true }
+          if (plan.segments.length >= MAX_TEXT_SEGMENTS) return false
+          const id = plan.segments.length
+          plan.segments.push({ id, field: source.field, text })
+          pieces.push({ id, leading, trailing })
+          return true
+        }
+        for (const token of raw.matchAll(structurePattern())) {
+          if (!addText(raw.slice(offset, token.index))) return undefined
+          pieces.push(token[0])
+          offset = token.index + token[0].length
+        }
+        if (!addText(raw.slice(offset))) return undefined
       }
       const kept = keeps[gap]
       if (kept !== undefined) pieces.push(kept)
     }
-    plan.fields.push({ protectedText: p, pieces, ids })
+    plan.fields.push({ pieces })
   }
   return plan
 }
 
-export function segmentRequest(plan: ProtectedBatch, ids = plan.segments.map(s => s.id), accepted: ReadonlyMap<number, string> = new Map()): string {
-  const seen = new Set<number>()
-  return JSON.stringify(ids.flatMap(id => {
+export function segmentRequest(plan: ProtectedBatch, ids = plan.segments.map(s => s.id)): string {
+  const rows = ids.flatMap(id => {
     const segment = plan.segments[id]
     if (!segment) return []
-    const first = !seen.has(segment.group)
-    seen.add(segment.group)
-    return [{ ...segment, ...(first ? {
-      context: plan.fields[segment.group]?.protectedText.text,
-      ...(accepted.size ? { accepted: plan.segments.filter(s => s.group === segment.group && accepted.has(s.id)).map(s => ({ id: s.id, text: accepted.get(s.id) })) } : {}),
-    } : {}) }]
-  }))
+    return [{ id, field: segment.field, text: segment.text }]
+  })
+  // Present large batches independently so the model cannot treat adjacent
+  // records as a sentence and move a phrase across locally retained code.
+  // Stable integer mixing makes requests reproducible; IDs alone own assembly.
+  if (rows.length >= 8) rows.sort((a, b) => (Math.imul(a.id + 1, 0x9e3779b1) >>> 0) - (Math.imul(b.id + 1, 0x9e3779b1) >>> 0))
+  return JSON.stringify(rows)
 }
 
 export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = plan.segments.map(s => s.id)) {
@@ -88,7 +120,8 @@ export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = p
     if (seen.has(id)) validation.duplicate++
     seen.add(id)
     const rawText = "text" in row && typeof row.text === "string" ? row.text : undefined
-    if (rawText === undefined || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(rawText) || plan.prefixes.some(prefix => rawText.includes(prefix))) {
+    const segment = plan.segments[id]
+    if (rawText === undefined || !segment || !validSegmentText(segment, rawText) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(rawText) || plan.prefixes.some(prefix => rawText.includes(prefix))) {
       validation.unexpected++
       conflicts.add(id)
       values.delete(id)
@@ -104,13 +137,7 @@ export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = p
 }
 
 export function unresolvedSegments(plan: ProtectedBatch, values: ReadonlyMap<number, string>): number[] {
-  const missing = new Set(plan.segments.filter(s => !values.has(s.id)).map(s => s.id))
-  for (const field of plan.fields) {
-    if (field.ids.length && field.ids.every(id => values.has(id)) && !meaningful.test(field.ids.map(id => values.get(id) ?? "").join(""))) {
-      for (const id of field.ids) missing.add(id)
-    }
-  }
-  return [...missing].sort((a, b) => a - b)
+  return plan.segments.filter(segment => !validSegmentText(segment, values.get(segment.id) ?? "")).map(segment => segment.id)
 }
 
 export function assembleProtectedBatch(plan: ProtectedBatch, values: ReadonlyMap<number, string>): string[] | undefined {
@@ -118,7 +145,6 @@ export function assembleProtectedBatch(plan: ProtectedBatch, values: ReadonlyMap
   return plan.fields.map(field => field.pieces.map(piece => {
     if (typeof piece === "string") return piece
     const text = values.get(piece.id) ?? ""
-    if (!text && piece.hadText) return (piece.leading + piece.trailing).replace(/[^\r\n]/g, "")
     return piece.leading + text + piece.trailing
   }).join(""))
 }

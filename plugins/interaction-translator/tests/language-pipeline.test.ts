@@ -69,7 +69,7 @@ test("Codex output translation restores code split across response chunks", { op
   on("config.list", () => ({ value: [] }))
   on("process.run", (_, e) => {
     expect(e.argv.join(" ")).toContain("assistant response")
-    expect(e.init?.stdin).toContain("__GLM_KEEP_0__")
+    expect(e.init?.stdin?.includes("GLM_KEEP")).toBe(false)
     expect(e.init?.stdin?.includes("demo.go")).toBe(false)
     return { value: { exitCode: 0, stdout: segmentResponse(e.init?.stdin, "查看 __GLM_KEEP_0__。\n__GLM_KEEP_1__"), stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -117,7 +117,7 @@ test("response headings are translated without applying input command bypass", {
   on("http.fetch", (_, e) => {
     const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
     expect(request.messages[0].content).toContain("natural Japanese")
-    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: "# 結果\n完了しました。" } }] }) } }
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: '[{"id":0,"text":"結果"},{"id":1,"text":"完了しました。"}]' } }] }) } }
   })
   on("turn.step", async function* (_, e) {
     yield { kind: "text", index: 0, text: "# Result\nDone." }
