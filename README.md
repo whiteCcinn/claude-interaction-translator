@@ -198,7 +198,7 @@ claude plugin marketplace update claude-interaction-translator
 claude plugin update interaction-translator@claude-interaction-translator
 ```
 
-更新后在当前 Claude 会话运行 `/reload-plugins`，或重新启动 Claude。
+更新后，请完整退出并重新启动 Claude Code，确保当前进程加载新版代码。恢复旧会话后，手动点击要重新翻译的回复。
 
 临时停用 / 重新启用，在终端分别执行：
 

@@ -18,7 +18,9 @@ export type SegmentValidation = {
 }
 export const MAX_TEXT_SEGMENTS = 512
 const meaningful = /[\p{L}\p{N}]/u
-const spanPrefix = /^[ \t]*(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|(?:>[ \t]*)+)/
+// A prefix can contain consecutive markers, such as a quote followed by a
+// list marker or a heading followed by a section number.
+const spanPrefix = /^[ \t]*(?:(?:#{1,6}|[-+*]|\d+[.)])[ \t]+|>[ \t]*)+/
 
 // Match only local syntax, never protected values. In particular, line endings
 // and table pipes must not depend on a model preserving an otherwise empty gap.

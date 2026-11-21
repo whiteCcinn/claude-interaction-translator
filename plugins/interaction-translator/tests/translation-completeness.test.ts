@@ -67,7 +67,7 @@ test("line breaks, table cells, emphasis and list boundaries stay in the local s
   expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 概述\r\n\r\n| 服务 | 职责 |\r\n|---|---|\r\n| **任务进程** | 读取 `queue`. |\r\n\r\n1. **下一步：** 增加账号。\r\n- 保留配额。"])
 })
 
-for (const corrupt of ["", "。", "第一段\n第二段", "单元格 | 其他单元格", "**新增标题**"]) {
+for (const corrupt of ["", "。", "第一段\n第二段", "单元格 | 其他单元格", "**新增标题**", "1. 新增编号"]) {
   test(`rejects dropped prose or injected structure: ${JSON.stringify(corrupt)}`, () => {
     const plan = planFor("Read `queue` and keep every record.")
     const parsed = parseSegmentResponse(JSON.stringify(plan.segments.map(segment => ({ id: segment.id, text: segment.id === 0 ? "读取" : corrupt }))), plan)
@@ -102,6 +102,16 @@ test("numbered bold headings, nested lists, escaped pipes and tabs stay local", 
   const translations: Record<string, string> = { "Configure accounts.": "配置账号。", Read: "读取", A: "甲", B: "乙", C: "丙", "Next.": "下一步。" }
   const parsed = parseSegmentResponse(JSON.stringify(plan.segments.map(segment => ({ id: segment.id, text: translations[segment.text] }))), plan)
   expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["**1. 配置账号。**\n    - 读取 `config`.\n| 甲 \\| 乙 | 丙 |\n\t下一步。"])
+})
+
+test("numbered Markdown headings and quoted lists keep all consecutive prefixes local", () => {
+  const source = "## 1. Setup\n## 2. Request\n## 3. Validation\n## 4. Rotation\n## 5. Limits\n> > ### 12) Notes\n> - Use version 1.2."
+  const plan = planFor(source)
+  const rows = JSON.parse(segmentRequest(plan)) as { id: number; text: string }[]
+  expect(rows.map(row => row.text)).toEqual(["Setup", "Request", "Validation", "Rotation", "Limits", "Notes", "Use version 1.2."])
+  const translations = ["设置", "请求", "校验", "轮换", "限制", "说明", "使用 1.2 版。"]
+  const parsed = parseSegmentResponse(JSON.stringify(rows.map(({ id }) => ({ id, text: translations[id] }))), plan)
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 1. 设置\n## 2. 请求\n## 3. 校验\n## 4. 轮换\n## 5. 限制\n> > ### 12) 说明\n> - 使用 1.2 版。"])
 })
 
 for (const backend of ["api", "codex-cli"]) {

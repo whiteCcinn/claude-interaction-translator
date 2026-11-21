@@ -196,7 +196,7 @@ claude plugin marketplace update claude-interaction-translator
 claude plugin update interaction-translator@claude-interaction-translator
 ```
 
-Then run `/reload-plugins` in the current Claude session or restart Claude.
+Fully exit and restart Claude Code after updating so it loads the new plugin code. After resuming a session, select the reply you want to translate again.
 
 To disable temporarily or enable again, run the corresponding terminal command:
 
