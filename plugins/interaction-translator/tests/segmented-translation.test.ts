@@ -3,11 +3,61 @@ import type { EngineInterface, PluginOptions } from "claude-code"
 import { protectText } from "../hooks/protected-text"
 import { prepareProtectedBatch, assembleProtectedBatch, parseSegmentResponse, segmentRequest, MAX_TEXT_SEGMENTS } from "../hooks/protected-segments"
 import { translateProtectedText } from "../hooks/segmented-translation"
+import { createTranslationDiagnostic } from "../hooks/translation-diagnostics"
 
 function engine(run: EngineInterface["process"]["run"], now: () => Promise<number> = async () => 0): EngineInterface {
   return { plugin: { name: "interaction-translator", root: "/tmp/scaffold-fixture" }, config: { list: async () => [] }, clock: { now }, process: { run } } as unknown as EngineInterface
 }
 const cli: PluginOptions = { backend: "codex-cli", codex_timeout_seconds: 120 }
+
+test("punctuation and emoji between five protected values do not require model records", async () => {
+  const source = "Read (`first`), `second` / `third` → `fourth` 😺 `fifth`."
+  let calls = 0
+  const $ = engine(async (_, init) => {
+    calls++
+    const rows = JSON.parse(init?.stdin ?? "") as { id: number; text: string }[]
+    return { exitCode: 0, stdout: JSON.stringify(rows.map(({ id, text }) => ({ id, text: text === "Read (" ? "读取 (" : "" }))), stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  })
+  const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText(source), 8192, new AbortController().signal)
+  expect(result).toEqual({ text: source.replace("Read", "读取") })
+  expect(calls).toBe(1)
+})
+
+test("surrounding whitespace is trimmed without allowing internal structure or controls", () => {
+  const plan = prepareProtectedBatch([{ protectedText: protectText("Open `/tmp/file`"), field: "response" }])
+  if (!plan) throw new Error("Missing plan")
+  const parse = (text: string) => parseSegmentResponse(JSON.stringify([{ id: 0, text }]), plan)
+  expect(assembleProtectedBatch(plan, parse("\r\n\t打开 \n").values)).toEqual(["打开 `/tmp/file`"])
+  for (const invalid of ["先打\n开", "先打\t开", "\u000c打开", "打开\u2028文件", "打开 | 文件"]) {
+    expect(assembleProtectedBatch(plan, parse(invalid).values)).toBe(undefined)
+  }
+})
+
+test("repair gives specific feedback and copies counts without exposing rejected text", async () => {
+  let calls = 0
+  const $ = engine(async (argv, init) => {
+    const rows = JSON.parse(init?.stdin ?? "") as { id: number; text: string }[]
+    calls++
+    if (calls === 2) {
+      expect(rows).toEqual([
+        { id: 0, field: "prose", text: "Open the document" },
+        { id: 1, field: "prose", text: "and review the notes." },
+      ])
+      const instructions = argv.find(value => value.startsWith("developer_instructions="))
+      expect(instructions).toContain("ID 0: return plain text")
+      expect(instructions).toContain("ID 1: return a nonempty translation")
+      expect(instructions?.includes("private output")).toBe(false)
+    }
+    const stdout = JSON.stringify([{ id: 0, text: "**private output**" }, { id: 1, text: " " }, { id: 4, text: "unknown" }])
+    return { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  })
+  const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText("Open the document `/tmp/private.txt` and review the notes."), 8192, new AbortController().signal)
+  expect(calls).toBe(2)
+  if (!("failure" in result) || result.failure?.kind !== "segments") throw new Error("Expected segment rejection")
+  const report = createTranslationDiagnostic(cli, "output", result.failure)
+  expect(report.segmentRejected).toEqual({ empty: 1, structure: 1, unknownId: 1 })
+  expect(JSON.stringify(report).includes("private")).toBe(false)
+})
 
 test("34 protected values survive without the model returning a single marker", () => {
   const source = Array.from({ length: 34 }, (_, i) => `Read \`/private/${i}.go\`.`).join("\n")
@@ -26,14 +76,14 @@ test("34 protected values survive without the model returning a single marker", 
 })
 
 test("reordered IDs keep every translated phrase on its own side of fixed code", () => {
-  const plan = prepareProtectedBatch([{ protectedText: protectText("请保留 `/tmp/demo.txt`。"), field: "instructions" }])
+  const plan = prepareProtectedBatch([{ protectedText: protectText("请保留 `/tmp/demo.txt` 并检查内容。"), field: "instructions" }])
   if (!plan) throw new Error("Missing plan")
-  const parsed = parseSegmentResponse('[{"id":1,"text":"。"},{"id":0,"text":"保持してください："}]', plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["保持してください： `/tmp/demo.txt`。"])
+  const parsed = parseSegmentResponse('[{"id":1,"text":"内容も確認してください。"},{"id":0,"text":"保持してください："}]', plan)
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["保持してください： `/tmp/demo.txt` 内容も確認してください。"])
 })
 
 test("conflicting duplicates, unknown IDs and copied context are not blindly accepted", () => {
-  const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a`."), field: "response" }])
+  const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a` in full."), field: "response" }])
   if (!plan) throw new Error("Missing plan")
   const parsed = parseSegmentResponse('[{"id":0,"text":"A"},{"id":0,"text":"B"},{"id":1,"text":"__GLM_KEEP_0__"},{"id":99,"text":"extra"}]', plan)
   expect(parsed.values.size).toBe(0)
@@ -57,15 +107,15 @@ test("only a missing gap is repaired and already accepted prose is retained", as
     const rows = JSON.parse(init?.stdin ?? "") as { id: number; text: string }[]
     calls++
     if (calls === 1) {
-      expect(rows.length).toBe(3)
-      return { exitCode: 0, stdout: '[{"id":0,"text":"读取"},{"id":2,"text":"。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+      expect(rows.length).toBe(2)
+      return { exitCode: 0, stdout: '[{"id":0,"text":"读取"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
     }
     expect(rows.map(r => r.id)).toEqual([1])
     expect(rows).toEqual([{ id: 1, field: "prose", text: "and" }])
     return { exitCode: 0, stdout: '[{"id":1,"text":"和"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
   })
   const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText("Read `/tmp/a` and `/tmp/b`."), 8192, new AbortController().signal)
-  expect(result).toEqual({ text: "读取 `/tmp/a` 和 `/tmp/b`。" })
+  expect(result).toEqual({ text: "读取 `/tmp/a` 和 `/tmp/b`." })
   expect(calls).toBe(2)
 })
 
@@ -107,9 +157,9 @@ test("repair shares the configured CLI deadline rather than restarting it", asyn
     timeouts.push(init?.timeoutMs)
     if (timeouts.length === 1) { now = 80000; return { exitCode: 0, stdout: '[{"id":0,"text":"读取"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
     expect(init?.timeoutMs).toBe(40000)
-    return { exitCode: 0, stdout: '[{"id":1,"text":"。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+    return { exitCode: 0, stdout: '[{"id":1,"text":"并检查内容。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
   }, async () => now)
-  expect(await translateProtectedText($, cli, {}, "Translate", protectText("Read `/tmp/a`."), 8192, new AbortController().signal)).toEqual({ text: "读取 `/tmp/a`。" })
+  expect(await translateProtectedText($, cli, {}, "Translate", protectText("Read `/tmp/a` and check its contents."), 8192, new AbortController().signal)).toEqual({ text: "读取 `/tmp/a` 并检查内容。" })
   expect(timeouts).toEqual([120000, 40000])
 })
 
@@ -132,7 +182,7 @@ test("backend failures do not trigger a repair request", async () => {
 })
 
 test("segment capacity is bounded before backend work", async () => {
-  const source = Array.from({ length: MAX_TEXT_SEGMENTS }, (_, i) => `Read \`/tmp/${i}\`.`).join(" ")
+  const source = Array.from({ length: MAX_TEXT_SEGMENTS + 1 }, (_, i) => `Read \`/tmp/${i}\`.`).join(" ")
   expect(prepareProtectedBatch([{ protectedText: protectText(source), field: "response" }])).toBe(undefined)
   let calls = 0
   const $ = engine(async () => { calls++; throw new Error("Must not run") })
@@ -148,15 +198,15 @@ test("field groups preserve code ownership, empty fields and line breaks", () =>
     { protectedText: protectText(""), field: "description" },
   ])
   if (!plan) throw new Error("Missing plan")
-  const parsed = parseSegmentResponse('```json\n[{"id":3,"text":"。"},{"id":2,"text":"使用"},{"id":1,"text":"。"},{"id":0,"text":"读取"}]\n```', plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["读取 `first.go`。\n", "使用 `second.go`。", ""])
-  const invalid = parseSegmentResponse('[{"id":0,"text":"读取"},{"id":1,"text":"。"},{"id":2,"text":"__GLM_KEEP_0__"},{"id":3,"text":"。"}]', plan)
+  const parsed = parseSegmentResponse('```json\n[{"id":1,"text":"使用"},{"id":0,"text":"读取"}]\n```', plan)
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["读取 `first.go`.\n", "使用 `second.go`.", ""])
+  const invalid = parseSegmentResponse('[{"id":0,"text":"读取"},{"id":1,"text":"__GLM_KEEP_0__"}]', plan)
   expect(assembleProtectedBatch(plan, invalid.values)).toBe(undefined)
 })
 
 test("a complete but empty prose field is retried and then rejected", async () => {
   let calls = 0
-  const $ = engine(async () => { calls++; return { exitCode: 0, stdout: '[{"id":0,"text":""},{"id":1,"text":"。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } })
+  const $ = engine(async () => { calls++; return { exitCode: 0, stdout: '[{"id":0,"text":""}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } })
   const result = await translateProtectedText($, cli, {}, "Translate", protectText("Read `/tmp/a`."), 8192, new AbortController().signal)
   expect("drop" in result && result.drop).toContain("TR_SEGMENT_INVALID")
   expect("failure" in result && result.failure?.kind === "segments" && result.failure.validation.missing).toBe(1)
@@ -166,8 +216,8 @@ test("a complete but empty prose field is retried and then rejected", async () =
 test("identical duplicates and unknown metadata cannot add content to the assembled result", () => {
   const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a`."), field: "response" }])
   if (!plan) throw new Error("Missing plan")
-  const parsed = parseSegmentResponse('[{"id":0,"text":"读取","context":"untrusted"},{"id":0,"text":"读取"},{"id":1,"text":"。"},{"id":99,"text":"extra"}]', plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["读取 `/tmp/a`。"])
+  const parsed = parseSegmentResponse('[{"id":0,"text":"读取","context":"untrusted"},{"id":0,"text":"读取"},{"id":99,"text":"extra"}]', plan)
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["读取 `/tmp/a`."])
   expect(parsed.validation.duplicate).toBe(1)
   expect(parsed.validation.unexpected).toBe(1)
 })

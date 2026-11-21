@@ -80,7 +80,7 @@ test("Codex output translation restores code split across response chunks", { op
     return { ...e, answer: 'See `/tmp/demo.go`.\n```go\nfmt.Println("hi")\n```', toolUses: [], stopReason: "end_turn", usage: null }
   })
   const result = await collect($.turn.step(step))
-  expect(result.text).toBe('查看 `/tmp/demo.go`。\n```go\nfmt.Println("hi")\n```')
+  expect(result.text).toBe('查看 `/tmp/demo.go`.\n```go\nfmt.Println("hi")\n```')
   expect(result.chunks.filter(chunk => chunk.kind === "text").length).toBe(2)
 })
 

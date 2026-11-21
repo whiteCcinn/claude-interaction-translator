@@ -2,6 +2,8 @@ import type { EngineInterface, PluginOptions, RenderSurface } from "claude-code"
 import { DEFAULT_CODEX_TIMEOUT_SECONDS, MAX_CODEX_TIMEOUT_SECONDS } from "./configuration"
 import { translationFailureCode } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
+import { SEGMENT_REJECTION_REASONS } from "./protected-segments"
+import type { SegmentRejection } from "./protected-segments"
 
 export type TranslationDiagnostic = {
   reportVersion: 2
@@ -23,6 +25,7 @@ export type TranslationDiagnostic = {
   segmentMissing?: number
   segmentDuplicate?: number
   segmentUnexpected?: number
+  segmentRejected?: Partial<Record<SegmentRejection, number>>
 }
 
 // Construct reports field-by-field; never spread options or provider errors.
@@ -52,6 +55,13 @@ export function createTranslationDiagnostic(options: PluginOptions, stage: Trans
     if (Number.isSafeInteger(v.missing) && v.missing >= 0) result.segmentMissing = v.missing
     if (Number.isSafeInteger(v.duplicate) && v.duplicate >= 0) result.segmentDuplicate = v.duplicate
     if (Number.isSafeInteger(v.unexpected) && v.unexpected >= 0) result.segmentUnexpected = v.unexpected
+    for (const reason of SEGMENT_REJECTION_REASONS) {
+      const count = v.rejected?.[reason]
+      if (typeof count === "number" && Number.isSafeInteger(count) && count > 0) {
+        const rejected = result.segmentRejected ??= {}
+        rejected[reason] = count
+      }
+    }
   }
   return result
 }

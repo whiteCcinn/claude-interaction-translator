@@ -2,7 +2,7 @@ import type { EngineInterface, PluginOptions } from "claude-code"
 import type { ConfigurationState } from "./configuration-runtime"
 import type { protectText } from "./protected-text"
 import { assembleProtectedBatch, hasTranslationStructure, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
-import type { ProtectedField } from "./protected-segments"
+import type { ProtectedField, SegmentRejection, SegmentValidation } from "./protected-segments"
 import { requestTranslation, translationFailure } from "./translation-client"
 import type { TranslationResult } from "./translation-client"
 import { diagnosticTime } from "./translation-diagnostics"
@@ -17,6 +17,15 @@ const SEGMENT_INSTRUCTIONS = [
   "On a repair request, return only the requested unresolved ids. Other translations are retained locally and must not be repeated.",
 ].join("\n")
 
+const REPAIR_GUIDANCE: Record<Exclude<SegmentRejection, "responseShape" | "unknownId">, string> = {
+  textType: "return the translation as a JSON string",
+  empty: "return a nonempty translation of all the source prose",
+  short: "translate the complete source without abbreviating or summarizing it",
+  structure: "return plain text on one line without Markdown or table delimiters",
+  control: "remove control characters",
+  placeholder: "translate only the source prose and omit placeholders",
+}
+
 export async function translateProtectedFields($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, fields: readonly ProtectedField[], maxTokens: number, signal: AbortSignal): Promise<{ texts: string[] } | Exclude<TranslationResult, { text: string }>> {
   if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
   const plan = prepareProtectedBatch(fields)
@@ -29,7 +38,8 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
   let ids = plan.segments.map(s => s.id)
   let startedAt: number | undefined
   const configuredSeconds = typeof options.codex_timeout_seconds === "number" ? options.codex_timeout_seconds : DEFAULT_CODEX_TIMEOUT_SECONDS
-  let last = { expected: ids.length, observed: 0, missing: ids.length, duplicate: 0, unexpected: 0 }
+  let last: SegmentValidation = { expected: ids.length, observed: 0, missing: ids.length, duplicate: 0, unexpected: 0 }
+  let repairGuidance = ""
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
     let remainingMs: number | undefined
@@ -43,7 +53,7 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     const started = attempt === 0 ? diagnosticTime($) : undefined
     // Start the first request before awaiting its diagnostic clock so a
     // prioritized question cannot be overtaken by a plain assistant request.
-    const pending = requestTranslation($, options, configuration, `${prompt}\n${SEGMENT_INSTRUCTIONS}`, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, remainingMs)
+    const pending = requestTranslation($, options, configuration, `${prompt}\n${SEGMENT_INSTRUCTIONS}${repairGuidance}`, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, remainingMs)
     if (started) startedAt = await started
     const result = await pending
     if ("drop" in result) return result
@@ -54,6 +64,17 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     ids = unresolvedSegments(plan, values)
     const texts = assembleProtectedBatch(plan, values)
     if (texts) return { texts }
+    if (attempt === 0 && parsed.issues.size) {
+      const byReason = new Map<keyof typeof REPAIR_GUIDANCE, number[]>()
+      for (const [id, issue] of parsed.issues) {
+        const group = byReason.get(issue)
+        if (group) group.push(id)
+        else byReason.set(issue, [id])
+      }
+      const corrections = [...byReason].map(([issue, group]) =>
+        `${group.length === 1 ? "ID" : "IDs"} ${group.join(", ")}: ${REPAIR_GUIDANCE[issue]}.`)
+      repairGuidance = "\nCorrect these validation errors in this request:\n" + corrections.join("\n")
+    }
     for (const id of ids) values.delete(id)
   }
   return translationFailure({ kind: "segments", validation: { ...last, expected: plan.segments.length, observed: values.size, missing: ids.length } })

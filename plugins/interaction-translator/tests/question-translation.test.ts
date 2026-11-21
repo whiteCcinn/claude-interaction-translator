@@ -122,8 +122,8 @@ test("automatic question repair retains protected code in its own field and pres
   const result = parseQuestions(entry?.translated ?? "")?.[0]
   expect(result?.options[0]?.label).toBe("Admin binary")
   expect(result?.options[1]?.label).toBe("Sidecar")
-  expect(result?.options[0]?.description).toContain("使用 `first.go`。")
-  expect(result?.options[1]?.description).toContain("使用 `second.go`。")
+  expect(result?.options[0]?.description).toContain("使用 `first.go`.")
+  expect(result?.options[1]?.description).toContain("使用 `second.go`.")
   expect(result?.question).toBe("任务应该在哪里运行？")
 })
 

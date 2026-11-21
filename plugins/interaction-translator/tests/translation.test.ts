@@ -50,7 +50,7 @@ test("loads a plugin-local API key and sends the OpenAI-compatible request", asy
   const result = await $.prompt.submit({ text: "修改按钮。保留 /tmp/demo.txt。", origin: { kind: "composer" }, wait: false })
   expect(result.text).toBe("修改按钮。保留 /tmp/demo.txt。")
   const row = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "protected-prompt", message: { type: "user", content: [{ type: "text", text: result.text ?? "" }] } })
-  expect(row.message?.content).toEqual([{ type: "text", text: "Change the button. Keep /tmp/demo.txt." }])
+  expect(row.message?.content).toEqual([{ type: "text", text: "Change the button. Keep /tmp/demo.txt。" }])
   expect(result.context?.[0]).toContain("Reply in natural English")
 })
 
@@ -76,7 +76,7 @@ test("preserves leading identifiers and allows an existing path at the start", a
   on("env.get", () => ({ value: "example-token" }))
   on("http.fetch", (_, e) => {
     const request = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
-    expect(JSON.parse(request.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["请保留", "。"])
+    expect(JSON.parse(request.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["请保留"])
     return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ model: "glm-5.3-flash", choices: [{ message: { content: segmentResponse(request.messages[1].content, "保持してください：__GLM_KEEP_0__。") } }] }) } }
   })
   on("prompt.submit", (_, e) => ({ text: e.text, origin: e.origin }))

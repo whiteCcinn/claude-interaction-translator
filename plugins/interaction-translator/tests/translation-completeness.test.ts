@@ -56,7 +56,7 @@ test("line breaks, table cells, emphasis and list boundaries stay in the local s
   const plan = planFor(source)
   const translations: Record<string, string> = {
     Overview: "概述", Service: "服务", Role: "职责", worker: "任务进程",
-    Reads: "读取", ".": "。", "Next step:": "下一步：", "Add accounts.": "增加账号。", "Keep quotas.": "保留配额。",
+    Reads: "读取", "Next step:": "下一步：", "Add accounts.": "增加账号。", "Keep quotas.": "保留配额。",
   }
   const rows = plan.segments.map(segment => {
     expect(/[\r\n|*]/.test(segment.text)).toBe(false)
@@ -64,7 +64,7 @@ test("line breaks, table cells, emphasis and list boundaries stay in the local s
     return { id: segment.id, text: translations[segment.text] }
   }).reverse()
   const parsed = parseSegmentResponse(JSON.stringify(rows), plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 概述\r\n\r\n| 服务 | 职责 |\r\n|---|---|\r\n| **任务进程** | 读取 `queue`。 |\r\n\r\n1. **下一步：** 增加账号。\r\n- 保留配额。"])
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 概述\r\n\r\n| 服务 | 职责 |\r\n|---|---|\r\n| **任务进程** | 读取 `queue`. |\r\n\r\n1. **下一步：** 增加账号。\r\n- 保留配额。"])
 })
 
 for (const corrupt of ["", "。", "第一段\n第二段", "单元格 | 其他单元格", "**新增标题**"]) {
@@ -91,17 +91,17 @@ test("one translated phrase cannot conceal a near-empty summary of a long span",
 
 test("CJK translations can contract heavily while retaining a complete span", () => {
   const plan = planFor("## Internationalization\nAdministration reads `configuration`.")
-  const translations: Record<string, string> = { Internationalization: "国际化", "Administration reads": "管理端读取", ".": "。" }
+  const translations: Record<string, string> = { Internationalization: "国际化", "Administration reads": "管理端读取" }
   const parsed = parseSegmentResponse(JSON.stringify(plan.segments.map(segment => ({ id: segment.id, text: translations[segment.text] ?? "" }))), plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 国际化\n管理端读取 `configuration`。"])
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 国际化\n管理端读取 `configuration`."])
 })
 
 test("numbered bold headings, nested lists, escaped pipes and tabs stay local", () => {
   const source = "**1. Configure accounts.**\n    - Read `config`.\n| A \\| B | C |\n\tNext."
   const plan = planFor(source)
-  const translations: Record<string, string> = { "Configure accounts.": "配置账号。", Read: "读取", ".": "。", A: "甲", B: "乙", C: "丙", "Next.": "下一步。" }
+  const translations: Record<string, string> = { "Configure accounts.": "配置账号。", Read: "读取", A: "甲", B: "乙", C: "丙", "Next.": "下一步。" }
   const parsed = parseSegmentResponse(JSON.stringify(plan.segments.map(segment => ({ id: segment.id, text: translations[segment.text] }))), plan)
-  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["**1. 配置账号。**\n    - 读取 `config`。\n| 甲 \\| 乙 | 丙 |\n\t下一步。"])
+  expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["**1. 配置账号。**\n    - 读取 `config`.\n| 甲 \\| 乙 | 丙 |\n\t下一步。"])
 })
 
 for (const backend of ["api", "codex-cli"]) {

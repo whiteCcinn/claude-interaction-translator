@@ -15,7 +15,7 @@ for (const backend of ["api", "codex-cli"]) {
     const translate = async (input: string) => {
       calls++
       const rows = JSON.parse(input) as { id: number }[]
-      if (calls === 1) return '[{"id":0,"text":"读取"},{"id":2,"text":"。"}]'
+      if (calls === 1) return '[{"id":0,"text":"读取"}]'
       expect(rows.map(row => row.id)).toEqual([1])
       await clock.sleep(1000)
       return '[{"id":1,"text":"和"}]'
@@ -29,7 +29,7 @@ for (const backend of ["api", "codex-cli"]) {
     expect(calls).toBe(2)
     expect(await ui.find({ type: "Markdown", text: source })).toBeDefined()
     await clock.advance(1000)
-    expect(await ui.find({ type: "Markdown", text: "读取 `first.go` 和 `second.go`。" })).toBeDefined()
+    expect(await ui.find({ type: "Markdown", text: "读取 `first.go` 和 `second.go`." })).toBeDefined()
     await ui.redraw({ text: source, isFirstOfReply: true })
     await clock.advance(300)
     expect(calls).toBe(2)

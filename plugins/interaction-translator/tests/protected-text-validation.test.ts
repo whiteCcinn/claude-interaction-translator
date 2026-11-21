@@ -73,10 +73,10 @@ for (const backend of ["api", "codex-cli"]) {
     const result = await $.prompt.submit({ text: "保留 `/private/a.txt` 和 `/private/b.txt`。", origin: { kind: "composer" }, wait: false })
     expect(result.drop).toContain("TR_SEGMENT_INVALID")
     expect(result.text).toBe(undefined)
-    expect(await band.find({ type: "Text", text: /仍缺 3/ })).toBeDefined()
+    expect(await band.find({ type: "Text", text: /仍缺 2/ })).toBeDefined()
     await band.press({ key: "copy-translation-error" })
     expect(JSON.parse(report).stage).toBe("input")
-    expect(JSON.parse(report).segmentMissing).toBe(3)
+    expect(JSON.parse(report).segmentMissing).toBe(2)
     expect(report.includes("private")).toBe(false)
     await band.unmount()
   })
@@ -90,12 +90,12 @@ for (const backend of ["api", "codex-cli"]) {
     on("http.fetch", (_, e) => {
       calls++
       const body = JSON.parse(typeof e.init?.body === "string" ? e.init.body : "")
-      expect(JSON.parse(body.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["Read", "and", "."])
+      expect(JSON.parse(body.messages[1].content).map((row: { text: string }) => row.text)).toEqual(["Read", "and"])
       return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: bad } }] }) } }
     })
     on("process.run", (_, e) => {
       calls++
-      expect(JSON.parse(e.init?.stdin ?? "").map((row: { text: string }) => row.text)).toEqual(["Read", "and", "."])
+      expect(JSON.parse(e.init?.stdin ?? "").map((row: { text: string }) => row.text)).toEqual(["Read", "and"])
       return { value: { exitCode: 0, stdout: bad, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
     })
     on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
@@ -104,12 +104,13 @@ for (const backend of ["api", "codex-cli"]) {
     on("ui.toast", () => ({ value: undefined }))
     const row = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
     await clock.advance(300)
-    expect((await row.find({ type: "Text", text: /TR_SEGMENT_INVALID/ }))?.text).toContain("仍缺 3")
+    expect((await row.find({ type: "Text", text: /TR_SEGMENT_INVALID/ }))?.text).toContain("仍缺 2")
     expect(await row.find({ type: "Markdown", text: source })).toBeDefined()
     await row.press({ key: "copy-output-error" })
-    expect(JSON.parse(report).segmentMissing).toBe(3)
-    expect(JSON.parse(report).segmentExpected).toBe(3)
+    expect(JSON.parse(report).segmentMissing).toBe(2)
+    expect(JSON.parse(report).segmentExpected).toBe(2)
     expect(JSON.parse(report).segmentObserved).toBe(0)
+    expect(JSON.parse(report).segmentRejected).toEqual({ responseShape: 1 })
     expect(report.includes("private")).toBe(false)
     expect(calls).toBe(2)
     await row.unmount()
