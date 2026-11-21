@@ -250,8 +250,8 @@ export async function translateDisplay($: EngineInterface, options: PluginOption
     if (entry.kind === "question" && !question) { entry.translationFailure = { kind: "markers" }; entry.phase = "error"; return }
     const protectedText = question ? undefined : protectText(entry.source)
     const result = question
-      ? await translateProtectedFields($, options, configuration, questionFieldsPrompt(target, source), question.fields.map(field => ({ protectedText: field.protectedText, field: field.field })), 8192, controller.signal)
-      : protectedText ? await translateProtectedText($, options, configuration, translationPrompt(target, source, "response", protectedTextFormat(protectedText)), protectedText, 8192, controller.signal) : undefined
+      ? await translateProtectedFields($, options, configuration, questionFieldsPrompt(target, source), question.fields.map(field => ({ protectedText: field.protectedText, field: field.field })), 8192, controller.signal, { source, target })
+      : protectedText ? await translateProtectedText($, options, configuration, translationPrompt(target, source, "response", protectedTextFormat(protectedText)), protectedText, 8192, controller.signal, { source, target }) : undefined
     if (state.entries.get(entry.key) !== entry || entry.controller !== controller || controller.signal.aborted) return
     if (!result) { entry.phase = "error"; return }
     if ("drop" in result) {

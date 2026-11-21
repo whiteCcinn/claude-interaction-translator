@@ -8,6 +8,7 @@ export const LANGUAGES = {
 export type Language = keyof typeof LANGUAGES
 export type SourceLanguage = Language | "auto"
 export type TranslationKind = "instructions" | "response"
+export type TranslationDirection = { source: SourceLanguage; target: Language }
 
 export function languageCode(value: unknown, fallback: Language = "en"): Language {
   return typeof value === "string" && Object.hasOwn(LANGUAGES, value) ? value as Language : fallback

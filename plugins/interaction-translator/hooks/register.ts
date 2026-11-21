@@ -389,7 +389,7 @@ export function register(on: On, options: PluginOptions) {
       if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
       const result = skipTranslation ? { text: e.text.slice(leadingTag.length) }
-        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedTextFormat(protectedText)), protectedText, 1024, next.signal)
+        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedTextFormat(protectedText)), protectedText, 1024, next.signal, { source: languages.input, target: code })
       if ("drop" in result) {
         inputFailure = result.failure ?? { kind: "unknown" }
         errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置。" : errorHint)
@@ -531,7 +531,7 @@ export function register(on: On, options: PluginOptions) {
       let outputFailureReason: TranslationFailure = { kind: "unknown" }
       try {
         const translated = await translateProtectedText($, options, configuration,
-          translationPrompt(languages.output, languages.reply, "response", protectedTextFormat(protectedText)), protectedText, 8192, next.signal)
+          translationPrompt(languages.output, languages.reply, "response", protectedTextFormat(protectedText)), protectedText, 8192, next.signal, { source: languages.reply, target: languages.output })
         if (next.signal.aborted) return { ...result, answer: "" }
         if ("text" in translated) {
           rewritten = rewriteOutput(chunks, plan, translated.text)

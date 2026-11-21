@@ -96,6 +96,50 @@ test("CJK translations can contract heavily while retaining a complete span", ()
   expect(assembleProtectedBatch(plan, parsed.values)).toEqual(["## 国际化\n管理端读取 `configuration`."])
 })
 
+test("English articles separated from inline names cannot fail an otherwise complete CJK translation", () => {
+  const source = "Read `entry`. The `records` table stores IDs."
+  const fields = [{ protectedText: protectText(source), field: "prose" }]
+  for (const target of ["cn", "jp"] as const) {
+    const plan = prepareProtectedBatch(fields, { source: "en", target })
+    if (!plan) throw new Error("Missing translation plan")
+    const rows = JSON.parse(segmentRequest(plan)) as { id: number; text: string }[]
+    expect(rows.map(row => row.text)).toEqual(["Read", "table stores IDs."])
+    const translations = target === "cn" ? ["读取", "表存储 ID。"] : ["読み取る", "テーブルには ID が格納されます。"]
+    const parsed = parseSegmentResponse(JSON.stringify(rows.map(row => ({ id: row.id, text: translations[row.id] }))), plan)
+    expect(assembleProtectedBatch(plan, parsed.values)).toEqual([`${translations[0]} \`entry\`. \`records\` ${translations[1]}`])
+  }
+  const french = prepareProtectedBatch(fields, { source: "en", target: "fr" })
+  expect(french?.segments.map(row => row.text)).toContain(". The")
+  const unknownSource = prepareProtectedBatch(fields, { source: "auto", target: "cn" })
+  expect(unknownSource?.segments.map(row => row.text)).toContain(". The")
+})
+
+test("the length guard still rejects loss of the subject before a protected name", () => {
+  const plan = planFor("Here are all the records in the `archive`.")
+  const parsed = parseSegmentResponse('[{"id":0,"text":"以下是"}]', plan)
+  expect(parsed.validation.rejected).toEqual({ short: 1 })
+  expect(assembleProtectedBatch(plan, parsed.values)).toBe(undefined)
+})
+
+test("Codex display translation keeps a stranded article out of the requested prose", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  const source = "Read `entry`. The `records` table stores IDs."
+  let calls = 0
+  on("process.run", (_, e) => {
+    calls++
+    const rows = JSON.parse(e.init?.stdin ?? "") as { id: number; text: string }[]
+    expect(rows.map(row => row.text)).toEqual(["Read", "table stores IDs."])
+    return { value: { exitCode: 0, stdout: '[{"id":0,"text":"读取"},{"id":1,"text":"表存储 ID。"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
+  await clock.advance(300)
+  expect(calls).toBe(1)
+  expect(await ui.find({ type: "Markdown", text: "读取 `entry`. `records` 表存储 ID。" })).toBeDefined()
+  await ui.unmount()
+})
+
 test("numbered bold headings, nested lists, escaped pipes and tabs stay local", () => {
   const source = "**1. Configure accounts.**\n    - Read `config`.\n| A \\| B | C |\n\tNext."
   const plan = planFor(source)

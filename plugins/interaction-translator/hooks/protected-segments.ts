@@ -1,4 +1,5 @@
 import type { protectText } from "./protected-text"
+import type { TranslationDirection } from "./languages"
 
 type ProtectedText = ReturnType<typeof protectText>
 export type ProtectedField = { protectedText: ProtectedText; field: string }
@@ -18,6 +19,8 @@ export type SegmentValidation = {
 }
 export const MAX_TEXT_SEGMENTS = 512
 const meaningful = /[\p{L}\p{N}]/u
+const inlineCode = /^`[^`\r\n]+`$/
+const strandedArticle = /^([ \t]*[.!?][ \t]+)the[ \t]+$/i
 // A prefix can contain consecutive markers, such as a quote followed by a
 // list marker or a heading followed by a section number.
 const spanPrefix = /^[ \t]*(?:(?:#{1,6}|[-+*]|\d+[.)])[ \t]+|>[ \t]*)+/
@@ -41,8 +44,9 @@ function segmentTextIssue(segment: Segment, value: string): TextRejection | unde
   if (proseSize(value) < Math.ceil(proseSize(segment.text) / 8)) return "short"
 }
 
-export function prepareProtectedBatch(fields: readonly ProtectedField[]): ProtectedBatch | undefined {
+export function prepareProtectedBatch(fields: readonly ProtectedField[], direction?: TranslationDirection): ProtectedBatch | undefined {
   const plan: ProtectedBatch = { fields: [], segments: [], prefixes: [] }
+  const omitStrandedArticle = direction?.source === "en" && (direction.target === "cn" || direction.target === "jp")
   for (const source of fields) {
     const p = source.protectedText
     if (!p.prefix) return undefined
@@ -65,7 +69,13 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[]): Protec
     const translate = gaps.some(gap => meaningful.test(gap))
     const pieces: Piece[] = []
     for (const [gap, raw] of gaps.entries()) {
-      if (!translate) pieces.push(raw)
+      const kept = keeps[gap]
+      // In "name. The [inline code] ...", the article only introduces the
+      // following name. Chinese and Japanese do not need a word before it.
+      const sentenceBoundary = omitStrandedArticle && kept !== undefined && inlineCode.test(kept)
+        ? strandedArticle.exec(raw)?.[1] : undefined
+      if (sentenceBoundary !== undefined) pieces.push(sentenceBoundary)
+      else if (!translate) pieces.push(raw)
       else {
         let offset = 0
         const addText = (span: string): boolean => {
@@ -93,7 +103,6 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[]): Protec
         }
         if (!addText(raw.slice(offset))) return undefined
       }
-      const kept = keeps[gap]
       if (kept !== undefined) pieces.push(kept)
     }
     plan.fields.push({ pieces })

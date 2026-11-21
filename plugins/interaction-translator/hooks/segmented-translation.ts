@@ -1,5 +1,6 @@
 import type { EngineInterface, PluginOptions } from "claude-code"
 import type { ConfigurationState } from "./configuration-runtime"
+import type { TranslationDirection } from "./languages"
 import type { protectText } from "./protected-text"
 import { assembleProtectedBatch, hasTranslationStructure, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
 import type { ProtectedField, SegmentRejection, SegmentValidation } from "./protected-segments"
@@ -26,9 +27,9 @@ const REPAIR_GUIDANCE: Record<Exclude<SegmentRejection, "responseShape" | "unkno
   placeholder: "translate only the source prose and omit placeholders",
 }
 
-export async function translateProtectedFields($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, fields: readonly ProtectedField[], maxTokens: number, signal: AbortSignal): Promise<{ texts: string[] } | Exclude<TranslationResult, { text: string }>> {
+export async function translateProtectedFields($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, fields: readonly ProtectedField[], maxTokens: number, signal: AbortSignal, direction?: TranslationDirection): Promise<{ texts: string[] } | Exclude<TranslationResult, { text: string }>> {
   if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
-  const plan = prepareProtectedBatch(fields)
+  const plan = prepareProtectedBatch(fields, direction)
   if (!plan) return translationFailure({ kind: "capacity" })
   const values = new Map<number, string>()
   if (!plan.segments.length) {
@@ -84,9 +85,9 @@ export function protectedTextFormat(protectedText: ReturnType<typeof protectText
   return protectedText.values.length || hasTranslationStructure(protectedText.text) ? "segments" : "text"
 }
 
-export async function translateProtectedText($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, protectedText: ReturnType<typeof protectText>, maxTokens: number, signal: AbortSignal): Promise<TranslationResult> {
+export async function translateProtectedText($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, protectedText: ReturnType<typeof protectText>, maxTokens: number, signal: AbortSignal, direction?: TranslationDirection): Promise<TranslationResult> {
   if (protectedTextFormat(protectedText) === "text") return requestTranslation($, options, configuration, prompt, protectedText.text, maxTokens, signal)
-  const result = await translateProtectedFields($, options, configuration, prompt, [{ protectedText, field: "prose" }], maxTokens, signal)
+  const result = await translateProtectedFields($, options, configuration, prompt, [{ protectedText, field: "prose" }], maxTokens, signal, direction)
   if (!("texts" in result)) return result
   return result.texts[0] === undefined ? translationFailure({ kind: "unknown" }) : { text: result.texts[0] }
 }
