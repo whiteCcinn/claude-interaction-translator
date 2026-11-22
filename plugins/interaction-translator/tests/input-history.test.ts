@@ -27,6 +27,23 @@ test("queue inspection counts persisted handoffs until their stored row releases
   expect(await hasPendingPreparedInputs(engine)).toBe(false)
 })
 
+test("early translations are claimed by the submitted text and cannot alias a different pending original", async () => {
+  const engine = stateEngine()
+  const original = "[Image #1] 解释这张图。"
+  const submitted = "[Image #1] Explain this image."
+  const prepared = await prepareInput(engine, original, submitted, "en", true)
+  expect(prepared).toBeDefined()
+  expect(await prepareInput(engine, "[Image #1] 分析这张图。", submitted, "en", true)).toBe(undefined)
+  expect(await prepareInput(engine, submitted, submitted, "en")).toBe(undefined)
+  expect(await takePreparedInput(engine, [original], "other-row")).toBe(undefined)
+  const ordinary = await prepareInput(engine, original, "Describe the literal prompt.", "en")
+  expect(ordinary?.translated).toBe("Describe the literal prompt.")
+  const claimed = await takePreparedInput(engine, [submitted], "image-row")
+  expect(claimed?.source).toBe(original)
+  expect(claimed?.id).toBe(prepared?.id)
+  expect(await takePreparedInput(engine, [submitted], "other-row")).toBe(undefined)
+})
+
 test("composer history keeps the exact original while the model row receives the translation", async ($, on) => {
   mock.clock(on)
   on("config.list", () => ({ value: [] }))

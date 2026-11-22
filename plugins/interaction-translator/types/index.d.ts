@@ -1,4 +1,4 @@
-export type PreparedInput = { id: number; source: string; translated: string; target: string; rowId?: string }
+export type PreparedInput = { id: number; source: string; translated: string; target: string; rowId?: string; translatedAtSubmit?: true }
 export type PreparedInputs = { serial: number; pending: PreparedInput[] }
 
 declare module "claude-code" {

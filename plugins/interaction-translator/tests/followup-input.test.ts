@@ -89,7 +89,41 @@ test("a refused delivery rewrite retains the handoff until a confirmed write", a
   await ui.unmount()
 })
 
-for (const type of ["image", "document", "audio"] as const) {
+for (const wait of [false, true]) {
+  test(`an image followup with wait=${wait} enters the queue already translated and keeps its native image chip`, async ($, on) => {
+    mock.clock(on)
+    on("config.list", () => ({ value: [] }))
+    on("env.get", () => ({ value: "fixture-token" }))
+    const source = "[Image #1] 解释这个截图。"
+    const translated = "[Image #1] Explain this screenshot."
+    let calls = 0
+    on("http.fetch", (_, e) => {
+      calls++
+      const body = JSON.parse(String(e.init?.body))
+      const rows = JSON.parse(body.messages[1].content)
+      expect(rows).toEqual([{ id: 0, field: "prose", text: "解释这个截图。" }])
+      return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: '[{"id":0,"text":"Explain this screenshot."}]' } }] }) } }
+    })
+    on("prompt.submit", (_, e) => {
+      expect(e.wait).toBe(wait)
+      expect(e.attachments).toEqual([{ type: "image", id: "native-image" }])
+      return { text: e.text, origin: e.origin, context: e.context }
+    })
+    on("ui.render", { component: "UserMessage" }, ($, e) => $.ui.resolve(e).Text({ children: [e.props.text] }))
+    const result = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait, turnId: "running", attachments: [{ type: "image", id: "native-image" }] })
+    expect(result.text).toBe(translated)
+    expect(result.drop).toBe(undefined)
+    const content = [{ type: "text", text: prefix + translated + suffix }]
+    const stored = await $.session.append({ door: "delivery", origin: { kind: "composer" }, uuid: "queued-image", message: { type: "attachment", name: "queued_command", role: "user", content } })
+    expect(stored.message?.content).toEqual(content)
+    const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "UserMessage", requestId: "queued-image", props: { text: translated, origin: { kind: "composer" }, isExpanded: false } })
+    expect(await ui.find({ type: "Text", text: `原文：${source}\n译文：${translated}` })).toBeDefined()
+    await ui.unmount()
+    expect(calls).toBe(1)
+  })
+}
+
+for (const type of ["document", "audio"] as const) {
   test(`a mid-turn ${type} followup needing translation is rejected before backend work`, async ($, on) => {
     mock.clock(on)
     on("config.list", () => ({ value: [] }))
