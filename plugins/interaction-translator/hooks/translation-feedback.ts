@@ -1,6 +1,7 @@
 import type { EngineInterface, Timer } from "claude-code"
 import { LANGUAGES } from "./languages"
 import type { Language, SourceLanguage } from "./languages"
+import { withoutPasteDelimiters } from "./protected-text"
 import type { TranslationDiagnostic } from "./translation-diagnostics"
 
 export type Feedback = {
@@ -78,7 +79,10 @@ export async function finishFeedback($: EngineInterface, state: FeedbackState, h
   handle.diagnostic = !succeeded && diagnostic ? { ...diagnostic,
     ...(Number.isFinite(handle.elapsed) && handle.elapsed >= 0 ? { elapsedMs: Math.round(handle.elapsed * 1000) } : {}),
   } : undefined
-  if (detail !== undefined) handle.detail = detail.replace(/\s+/g, " ").slice(0, 180)
+  if (detail !== undefined) {
+    const preview = succeeded && handle.stage === "input" ? withoutPasteDelimiters(detail) : detail
+    handle.detail = preview.replace(/\s+/g, " ").slice(0, 180)
+  }
   $.ui.invalidate("ui.render")
   if (succeeded) state.hideTimer = $.clock.after(3000, () => clearFeedback($, state, handle))
 }

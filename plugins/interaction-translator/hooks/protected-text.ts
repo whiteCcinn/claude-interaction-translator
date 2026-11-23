@@ -1,9 +1,37 @@
+const pastedContentTag = /<(\/?)pasted_content id="([0-9a-f]{4})">/
+
+export function withoutPasteDelimiters(text: string): string {
+  if (!text.includes("<pasted_content ")) return text
+  const delimiterLine = new RegExp(String.raw`^${pastedContentTag.source}\r?$`)
+  const lines = text.split("\n")
+  const openings = new Map<string, number>()
+  const hidden = new Set<number>()
+  lines.forEach((line, index) => {
+    const match = delimiterLine.exec(line)
+    if (!match) return
+    const [, closing, id] = match
+    if (!closing) {
+      openings.set(id!, index)
+      return
+    }
+    const opening = openings.get(id!)
+    if (opening === undefined) return
+    hidden.add(opening)
+    hidden.add(index)
+    openings.delete(id!)
+  })
+  return lines.filter((_, index) => !hidden.has(index)).join("\n")
+}
+
 export function protectText(text: string, extraMarkers: readonly string[] = []): { text: string; prefix: string; values: string[] } {
   let prefix = "__GLM_KEEP_"
   while (text.includes(prefix)) prefix = "_" + prefix
   const values: string[] = []
   const keep = (value: string) => `${prefix}${values.push(value) - 1}__`
-  const pattern = /`[^`\n]+`|https?:\/\/[^\s<>"'`，。！？；（）]+|[A-Za-z]:\\[^\s`，。！？；（）]+|(?:~\/|\.{1,2}\/|\/)[A-Za-z0-9._~%:+/-]+/g
+  // Claude hides long-paste delimiters in the terminal only when their syntax
+  // is intact. Match the entire tag before a closing tag's slash is read as a path.
+  const lexemes = /`[^`\n]+`|https?:\/\/[^\s<>"'`，。！？；（）]+|[A-Za-z]:\\[^\s`，。！？；（）]+|(?:~\/|\.{1,2}\/|\/)[A-Za-z0-9._~%:+/-]+/
+  const pattern = new RegExp(`${pastedContentTag.source}|${lexemes.source}`, "g")
   const fences = /^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)/gm
   const parts: string[] = []
   let cursor = 0

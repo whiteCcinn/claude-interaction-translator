@@ -40,6 +40,27 @@ test("preserves custom executable paths and keeps shell syntax exclusively in st
   expect(result.context?.[0]).toContain("Reply in natural French")
 })
 
+test("native pasted content tags stay byte-for-byte intact while only their prose is translated", { options: cli }, async ($, on) => {
+  on("config.list", () => ({ value: [] }))
+  mock.clock(on)
+  on("ui.render", ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  const source = '\n\n<pasted_content id="1dbc">\n请检查回调。\n</pasted_content id="1dbc">\n'
+  const translated = source.replace("请检查回调。", "Please check the callback.")
+  on("process.run", (_, e) => {
+    expect(JSON.parse(e.init?.stdin ?? "")).toEqual([{ id: 0, field: "prose", text: "请检查回调。" }])
+    return { value: { exitCode: 0, stdout: '[{"id":0,"text":"Please check the callback."}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on("prompt.submit", (_, e) => ({ text: e.text, context: e.context, origin: e.origin }))
+  const accepted = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false })
+  expect(accepted.drop).toBe(undefined)
+  expect(accepted.text).toBe(source)
+  const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "AbovePrompt", props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} } })
+  expect((await ui.find({ type: "Text", text: /Please check the callback/ }))?.text?.trim()).toBe("Please check the callback.")
+  await ui.unmount()
+  const stored = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "native-paste", message: { type: "user", content: [{ type: "text", text: source }] } })
+  expect(stored.message?.content).toEqual([{ type: "text", text: translated }])
+})
+
 test("stops on a nonzero Codex exit without using stderr or falling back to API", { options: cli }, async ($, on) => {
   on("config.list", () => ({ value: [] }))
   on("process.run", () => ({ value: { exitCode: 1, stdout: "partial translation", stderr: "private diagnostics", isStdoutTruncated: false, isStderrTruncated: false } }))
