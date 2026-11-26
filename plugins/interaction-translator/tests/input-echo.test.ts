@@ -3,7 +3,7 @@ import type { On } from "claude-code"
 
 const source = "可以设置成卡片式的吗？填进去之后发现太长了。"
 const translated = "Can we use a card layout? After filling it in, I realized it was too long."
-const bilingual = `原文：${source}\n译文：${translated}`
+const bilingual = `原文：${source}\n\n译文：${translated}`
 const prefix = "<system-reminder>\nThe user sent a new message while you were working:\n"
 const suffix = "\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.\n</system-reminder>"
 
@@ -138,7 +138,7 @@ test("distinct originals with one translation keep their own echo identity", asy
   }
   for (const [index, original] of originals.entries()) {
     const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "UserMessage", requestId: `repeated-${index}`, props: { text: "Change the button.", origin: { kind: "composer" }, isExpanded: true } })
-    expect((await ui.find({ type: "Text", text: `原文：${original}\n译文：Change the button.` }))?.text).toBeDefined()
+    expect((await ui.find({ type: "Text", text: `原文：${original}\n\n译文：Change the button.` }))?.text).toBeDefined()
     await ui.unmount()
   }
 })

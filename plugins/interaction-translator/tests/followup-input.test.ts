@@ -117,7 +117,7 @@ for (const wait of [false, true]) {
     const stored = await $.session.append({ door: "delivery", origin: { kind: "composer" }, uuid: "queued-image", message: { type: "attachment", name: "queued_command", role: "user", content } })
     expect(stored.message?.content).toEqual(content)
     const ui = await $.ui.mount({ plugin: "interaction-translator", surface: "terminal", component: "UserMessage", requestId: "queued-image", props: { text: translated, origin: { kind: "composer" }, isExpanded: false } })
-    expect(await ui.find({ type: "Text", text: `原文：${source}\n译文：${translated}` })).toBeDefined()
+    expect(await ui.find({ type: "Text", text: `原文：${source}\n\n译文：${translated}` })).toBeDefined()
     await ui.unmount()
     expect(calls).toBe(1)
   })

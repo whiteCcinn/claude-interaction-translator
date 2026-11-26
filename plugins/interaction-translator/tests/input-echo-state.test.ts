@@ -7,16 +7,33 @@ const alias = uuid.slice(0, 24) + "000000000002"
 test("input echo accepts only the recorded row and exact body", () => {
   const state = createInputEchoState()
   recordInputEcho(state, "row", "原文", "Translation.")
-  expect(bilingualInputEcho(state, "row", "原文")).toBe("原文：原文\n译文：Translation.")
-  expect(bilingualInputEcho(state, "row", "Translation.")).toBe("原文：原文\n译文：Translation.")
+  expect(bilingualInputEcho(state, "row", "原文")).toBe("原文：原文\n\n译文：Translation.")
+  expect(bilingualInputEcho(state, "row", "Translation.")).toBe("原文：原文\n\n译文：Translation.")
   expect(bilingualInputEcho(state, "other", "原文")).toBe(undefined)
   expect(bilingualInputEcho(state, "row", "原文 suffix")).toBe(undefined)
+})
+
+test("input echo separates multiline original and translation with a blank line", () => {
+  const state = createInputEchoState()
+  const source = "先检查请求。\n再核对响应。"
+  const translated = "Check the request.\nThen verify the response."
+  recordInputEcho(state, "row", source, translated)
+  expect(bilingualInputEcho(state, "row", translated)).toBe(`原文：${source}\n\n译文：${translated}`)
+})
+
+test("native paste framing does not change the visible blank line", () => {
+  const state = createInputEchoState()
+  const paste = (text: string) => `\n\n<pasted_content id="1dbc">\n${text}\n</pasted_content id="1dbc">\n`
+  const source = "先检查请求。\n再核对响应。"
+  const translated = "Check the request.\nThen verify the response."
+  recordInputEcho(state, "row", paste(source), paste(translated))
+  expect(bilingualInputEcho(state, "row", paste(translated))).toBe(`原文：\n${source}\n\n译文：\n${translated}`)
 })
 
 test("native user block aliases use the exact original stored index", () => {
   const state = createInputEchoState()
   recordInputEcho(state, uuid, "原文", "Translation.", 2)
-  expect(bilingualInputEcho(state, alias, "Translation.")).toBe("原文：原文\n译文：Translation.")
+  expect(bilingualInputEcho(state, alias, "Translation.")).toBe("原文：原文\n\n译文：Translation.")
   expect(bilingualInputEcho(state, uuid.slice(0, 24) + "000000000001", "Translation.")).toBe(undefined)
 })
 
@@ -26,9 +43,9 @@ test("an alias collision cannot lend another row its original", () => {
   recordInputEcho(state, uuid, "第一条", "Translation.", 2)
   recordInputEcho(state, samePrefix, "第二条", "Translation.", 2)
   expect(bilingualInputEcho(state, alias, "Translation.")).toBe(undefined)
-  expect(bilingualInputEcho(state, uuid, "Translation.")).toBe("原文：第一条\n译文：Translation.")
+  expect(bilingualInputEcho(state, uuid, "Translation.")).toBe("原文：第一条\n\n译文：Translation.")
   recordInputEcho(state, samePrefix, "Same.", "Same.")
-  expect(bilingualInputEcho(state, alias, "Translation.")).toBe("原文：第一条\n译文：Translation.")
+  expect(bilingualInputEcho(state, alias, "Translation.")).toBe("原文：第一条\n\n译文：Translation.")
 })
 
 test("replacing a row removes old aliases and old wording", () => {
@@ -37,7 +54,7 @@ test("replacing a row removes old aliases and old wording", () => {
   recordInputEcho(state, uuid, "新原文", "New.", 0)
   expect(bilingualInputEcho(state, alias, "Old.")).toBe(undefined)
   expect(bilingualInputEcho(state, uuid, "Old.")).toBe(undefined)
-  expect(bilingualInputEcho(state, uuid, "New.")).toBe("原文：新原文\n译文：New.")
+  expect(bilingualInputEcho(state, uuid, "New.")).toBe("原文：新原文\n\n译文：New.")
 })
 
 test("echo row pressure evicts oldest presentations and keeps native fallback", () => {

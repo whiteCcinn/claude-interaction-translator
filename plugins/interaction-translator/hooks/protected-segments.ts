@@ -6,7 +6,7 @@ export type ProtectedField = { protectedText: ProtectedText; field: string }
 type Piece = string | { id: number; leading: string; trailing: string }
 type Segment = { id: number; field: string; text: string }
 export type ProtectedBatch = { fields: { pieces: Piece[] }[]; segments: Segment[]; prefixes: string[] }
-export const SEGMENT_REJECTION_REASONS = ["responseShape", "unknownId", "textType", "empty", "short", "structure", "control", "placeholder"] as const
+export const SEGMENT_REJECTION_REASONS = ["responseShape", "unknownId", "textType", "empty", "short", "structure", "control", "placeholder", "ellipsis"] as const
 export type SegmentRejection = typeof SEGMENT_REJECTION_REASONS[number]
 type TextRejection = Exclude<SegmentRejection, "responseShape" | "unknownId">
 export type SegmentValidation = {
@@ -19,6 +19,7 @@ export type SegmentValidation = {
 }
 export const MAX_TEXT_SEGMENTS = 512
 const meaningful = /[\p{L}\p{N}]/u
+const ellipsisPattern = /(?:[…⋯]|[.．。](?:[ \u00a0\u202f]*[.．。]){2})(?:[ \u00a0\u202f]*[.…⋯．。])*/g
 const inlineCode = /^`[^`\r\n]+`$/
 const strandedArticle = /^([ \t]*[.!?][ \t]+)the[ \t]+$/i
 // A prefix can contain consecutive markers, such as a quote followed by a
@@ -39,6 +40,8 @@ function proseSize(text: string): number { return text.replace(/[^\p{L}\p{N}]/gu
 function segmentTextIssue(segment: Segment, value: string): TextRejection | undefined {
   if (!value) return "empty"
   if (hasTranslationStructure(value)) return "structure"
+  const ellipses = value.match(ellipsisPattern)?.length ?? 0
+  if (ellipses > 0 && ellipses > (segment.text.match(ellipsisPattern)?.length ?? 0)) return "ellipsis"
   // English/French -> CJK may contract heavily. This deliberately generous
   // floor catches near-empty summaries, not arbitrary semantic omissions.
   if (proseSize(value) < Math.ceil(proseSize(segment.text) / 8)) return "short"
@@ -138,6 +141,7 @@ export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = p
   let rows: unknown
   const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*)\r?\n```$/i.exec(text.trim())
   try { rows = JSON.parse(fenced?.[1] ?? text) } catch { /* Classified below. */ }
+  if (typeof rows === "object" && rows !== null && "segments" in rows && Object.keys(rows).length === 1) rows = rows.segments
   if (!Array.isArray(rows)) { reject("responseShape"); return { values, validation, issues } }
   validation.observed = rows.length
   for (const row of rows as unknown[]) {

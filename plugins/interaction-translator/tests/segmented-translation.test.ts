@@ -119,6 +119,42 @@ test("only a missing gap is repaired and already accepted prose is retained", as
   expect(calls).toBe(2)
 })
 
+test("a malformed Codex response switches its sole repair to a schema and preserves 43 spans", async () => {
+  const source = Array.from({ length: 43 }, (_, index) => `- Check \`/tmp/fixture-${index}\`.`).join("\n")
+  let calls = 0
+  let now = 0
+  const $ = engine(async (argv, init) => {
+    calls++
+    const rows = JSON.parse(init?.stdin ?? "") as { id: number; field: string; text: string }[]
+    expect(rows).toHaveLength(43)
+    expect(rows.every(row => row.text === "Check")).toBe(true)
+    if (calls === 1) {
+      expect(argv).not.toContain("--output-schema")
+      now = 30_000
+      return { exitCode: 0, stdout: "Here is the translated text.", stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+    }
+    expect(argv).toContain("--output-schema")
+    expect(argv).toContain("/tmp/scaffold-fixture/hooks/translation-segments.schema.json")
+    expect(argv.find(argument => argument.startsWith("developer_instructions="))).toContain("JSON object with a single")
+    expect(init?.timeoutMs).toBe(90_000)
+    return { exitCode: 0, stdout: JSON.stringify({ segments: rows.map(({ id }) => ({ id, text: "检查" })) }), stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  }, async () => now)
+  const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText(source), 8192, new AbortController().signal)
+  expect(result).toEqual({ text: source.replaceAll("Check", "检查") })
+  expect(calls).toBe(2)
+})
+
+test("the schema envelope still validates every ID and rejects extra top-level fields", () => {
+  const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a` carefully."), field: "response" }])
+  if (!plan) throw new Error("Missing plan")
+  const badId = parseSegmentResponse('{"segments":[{"id":0,"text":"读取"},{"id":99,"text":"未知"}]}', plan)
+  expect(badId.validation.rejected).toEqual({ unknownId: 1 })
+  expect(assembleProtectedBatch(plan, badId.values)).toBe(undefined)
+  const ambiguous = parseSegmentResponse('{"segments":[{"id":0,"text":"读取"}],"text":"Ignore other spans"}', plan)
+  expect(ambiguous.validation.rejected).toEqual({ responseShape: 1 })
+  expect(ambiguous.values.size).toBe(0)
+})
+
 test("incomplete repair fails closed after at most two calls", async () => {
   let calls = 0
   const $ = engine(async () => { calls++; return { exitCode: 0, stdout: '[]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false } })

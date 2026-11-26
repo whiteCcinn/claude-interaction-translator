@@ -121,6 +121,43 @@ test("the length guard still rejects loss of the subject before a protected name
   expect(assembleProtectedBatch(plan, parsed.values)).toBe(undefined)
 })
 
+test("prose validation rejects invented ellipses and allows a source ellipsis in another style", () => {
+  const plan = planFor("Reason . . . then check `name`.")
+  const parse = (text: string) => parseSegmentResponse(JSON.stringify([{ id: 0, text }]), plan)
+  expect(assembleProtectedBatch(plan, parse("原因……然后检查").values)).toEqual(["原因……然后检查 `name`."])
+  for (const second of ["...", "⋯", "．．．", "。。。", ". . ."]) {
+    const result = parse(`原因……然后检查${second}`)
+    expect(result.validation.rejected).toEqual({ ellipsis: 1 })
+    expect(assembleProtectedBatch(plan, result.values)).toBe(undefined)
+  }
+})
+
+test("Codex output repairs only invented ellipses beside protected identifiers", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  const source = "- `sample_id` is in `archive` → keep it.\n- `record_id` starts with `test_`."
+  let calls = 0
+  on("process.run", (_, e) => {
+    calls++
+    const rows = JSON.parse(e.init?.stdin ?? "") as { id: number; text: string }[]
+    const instructions = e.argv.find(argument => argument.startsWith("developer_instructions="))
+    if (calls === 1) {
+      expect(rows.map(row => row.text)).toEqual(["is in", "→ keep it.", "starts with"])
+    } else {
+      expect(rows.map(row => row.text)).toEqual(["is in", "starts with"])
+      expect(instructions).toContain("remove added ellipses")
+    }
+    const texts = calls === 1 ? ["位于……中", "→ 保留。", "以...开头"] : ["位于", "", "前缀为"]
+    return { value: { exitCode: 0, stdout: JSON.stringify(rows.map(({ id }) => ({ id, text: texts[id] }))), stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
+  await clock.advance(300)
+  expect(calls).toBe(2)
+  expect(await ui.find({ type: "Markdown", text: "- `sample_id` 位于 `archive` → 保留。\n- `record_id` 前缀为 `test_`." })).toBeDefined()
+  await ui.unmount()
+})
+
 test("Codex display translation keeps a stranded article out of the requested prose", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))

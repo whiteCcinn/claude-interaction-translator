@@ -20,6 +20,11 @@ export function withoutPasteDelimiters(text: string): string {
     hidden.add(index)
     openings.delete(id!)
   })
+  // A paste-only submission starts with two line breaks before its opener.
+  // Keep one after the label and drop the transport newline after the closer.
+  if (hidden.has(2) && lines[0] === "" && lines[1] === "") hidden.add(0)
+  const last = lines.length - 1
+  if (hidden.has(last - 1) && lines[last] === "") hidden.add(last)
   return lines.filter((_, index) => !hidden.has(index)).join("\n")
 }
 

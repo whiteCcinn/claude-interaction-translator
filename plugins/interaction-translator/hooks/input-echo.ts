@@ -1,8 +1,10 @@
+import { withoutPasteDelimiters } from "./protected-text"
+
 export const MAX_INPUT_ECHO_ROWS = 128
 export const MAX_INPUT_ECHO_BYTES = 2 * 1024 * 1024
 const MAX_PRINTABLE_CHARS = 100000
 const ORIGINAL_LABEL = "原文："
-const TRANSLATION_LABEL = "\n译文："
+const TRANSLATION_LABEL = "\n\n译文："
 
 type InputEcho = { source: string; translated: string; bytes: number; ids: string[] }
 export type InputEchoState = { rows: Map<string, InputEcho>; identities: Map<string, Set<string>>; bytes: number; epoch: number }
@@ -65,5 +67,7 @@ export function bilingualInputEcho(state: InputEchoState, rowId: string, text: s
   const owner = owners.values().next().value
   const entry = owner === undefined ? undefined : state.rows.get(owner)
   if (!entry || (text !== entry.source && text !== entry.translated)) return undefined
-  return ORIGINAL_LABEL + entry.source + TRANSLATION_LABEL + entry.translated
+  // The native paste renderer collapses whitespace around closing tags.
+  // Remove the framing only from the visible echo so it retains the separator.
+  return ORIGINAL_LABEL + withoutPasteDelimiters(entry.source) + TRANSLATION_LABEL + withoutPasteDelimiters(entry.translated)
 }
