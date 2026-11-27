@@ -158,6 +158,61 @@ test("Codex output repairs only invented ellipses beside protected identifiers",
   await ui.unmount()
 })
 
+test("Codex recovers two repeated edge ellipses in a 50-span output", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  const leadingLines = Array.from({ length: 48 }, (_, index) => `- Check \`item_${index}\`.`)
+  const source = [...leadingLines, "- `sample_record` record to `ready`.", "- `sample_result` comes from a local check."].join("\n")
+  let calls = 0
+  on("process.run", (_, e) => {
+    calls++
+    const input = e.init?.stdin ?? ""
+    const rows = JSON.parse(input) as { id: number; text: string }[]
+    expect(rows).toHaveLength(calls === 1 ? 50 : 2)
+    if (calls === 2) {
+      expect(rows.map(row => row.id)).toEqual([48, 49])
+      const instructions = e.argv.find(argument => argument.startsWith("developer_instructions=")) ?? ""
+      expect(instructions).toContain("Inline code will be restored immediately before these IDs: 48, 49.")
+      expect(instructions).toContain("Inline code will be restored immediately after these IDs: 48.")
+      expect(input + instructions).not.toContain("sample_record")
+      expect(input + instructions).not.toContain("sample_result")
+    }
+    const translations = new Map([["record to", "记录设为……"], ["comes from a local check.", ". . . 来自本地检查。"]])
+    const result = rows.map(row => ({ id: row.id, text: translations.get(row.text) ?? "检查" }))
+    return { value: { exitCode: 0, stdout: JSON.stringify(result), stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
+  await clock.advance(300)
+  expect(calls).toBe(2)
+  const translated = [...leadingLines.map(line => line.replace("Check", "检查")), "- `sample_record` 记录设为 `ready`.", "- `sample_result` 来自本地检查。"].join("\n")
+  expect(await ui.find({ type: "Markdown", text: translated })).toBeDefined()
+  await ui.unmount()
+})
+
+test("edge ellipsis recovery still requires a matching inline boundary and valid prose", () => {
+  const cases = [
+    ["Check all accounts in `archive`.", "检查……中所有账号", "ellipsis"],
+    ["Check every archived record in `archive`.", "看……", "ellipsis"],
+    ["Check `archive`.", "……", "ellipsis"],
+    ["Check `archive`.", "……检查", "ellipsis"],
+    ["Check. `archive`", "检查……", "ellipsis"],
+    ["Check\n`archive`.", "检查……", "ellipsis"],
+    ["Check | `archive`", "检查……", "ellipsis"],
+    ["Check **`archive`**.", "检查……", "ellipsis"],
+    ["Check ... then read `archive`.", "查看……然后读取……", "ellipsis"],
+    ["Check `archive`.", "检查\u0000……", "control"],
+    ["Check `archive`.", "**检查**……", "structure"],
+    ["`archive` is available.", "……1. 可用", "ellipsis"],
+  ] as const
+  for (const [source, text, reason] of cases) {
+    const plan = planFor(source)
+    const parsed = parseSegmentResponse(JSON.stringify([{ id: 0, text }]), plan, [0], new Set([0]))
+    expect(parsed.validation.rejected).toEqual({ [reason]: 1 })
+    expect(assembleProtectedBatch(plan, parsed.values)).toBe(undefined)
+  }
+})
+
 test("Codex display translation keeps a stranded article out of the requested prose", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
   const clock = mock.clock(on)
   on("config.list", () => ({ value: [] }))

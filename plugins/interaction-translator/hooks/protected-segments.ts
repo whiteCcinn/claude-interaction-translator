@@ -4,7 +4,7 @@ import type { TranslationDirection } from "./languages"
 type ProtectedText = ReturnType<typeof protectText>
 export type ProtectedField = { protectedText: ProtectedText; field: string }
 type Piece = string | { id: number; leading: string; trailing: string }
-type Segment = { id: number; field: string; text: string }
+type Segment = { id: number; field: string; text: string; inlineBefore: boolean; inlineAfter: boolean }
 export type ProtectedBatch = { fields: { pieces: Piece[] }[]; segments: Segment[]; prefixes: string[] }
 export const SEGMENT_REJECTION_REASONS = ["responseShape", "unknownId", "textType", "empty", "short", "structure", "control", "placeholder", "ellipsis"] as const
 export type SegmentRejection = typeof SEGMENT_REJECTION_REASONS[number]
@@ -47,6 +47,19 @@ function segmentTextIssue(segment: Segment, value: string): TextRejection | unde
   if (proseSize(value) < Math.ceil(proseSize(segment.text) / 8)) return "short"
 }
 
+function removeInlineEllipses(segment: Segment, value: string): string {
+  // Preserve source ellipses and only remove placeholders at the exact edge
+  // where an existing inline code value will be restored in the same clause.
+  if (segment.text.match(ellipsisPattern)) return value
+  const before = segment.inlineBefore && /^[\p{L}\p{N}]/u.test(segment.text)
+  const after = segment.inlineAfter && /[\p{L}\p{N}]$/u.test(segment.text)
+  if (!before && !after) return value
+  return value.replace(ellipsisPattern, (run: string, index: number) => {
+    if ((before && index === 0) || (after && index + run.length === value.length)) return ""
+    return run
+  }).trim()
+}
+
 export function prepareProtectedBatch(fields: readonly ProtectedField[], direction?: TranslationDirection): ProtectedBatch | undefined {
   const plan: ProtectedBatch = { fields: [], segments: [], prefixes: [] }
   const omitStrandedArticle = direction?.source === "en" && (direction.target === "cn" || direction.target === "jp")
@@ -80,8 +93,10 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[], directi
       if (sentenceBoundary !== undefined) pieces.push(sentenceBoundary)
       else if (!translate) pieces.push(raw)
       else {
+        const inlineBefore = inlineCode.test(keeps[gap - 1] ?? "")
+        const inlineAfter = kept !== undefined && inlineCode.test(kept)
         let offset = 0
-        const addText = (span: string): boolean => {
+        const addText = (span: string, atEnd: boolean): boolean => {
           // A numbered heading can begin inside emphasis, e.g. **1. Title**.
           // Identify prefixes after every local delimiter, not just raw lines.
           const prefix = spanPrefix.exec(span)?.[0]
@@ -95,16 +110,20 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[], directi
           if (!meaningful.test(text)) { pieces.push(span); return true }
           if (plan.segments.length >= MAX_TEXT_SEGMENTS) return false
           const id = plan.segments.length
-          plan.segments.push({ id, field: source.field, text })
+          plan.segments.push({
+            id, field: source.field, text,
+            inlineBefore: inlineBefore && offset === 0 && !prefix,
+            inlineAfter: inlineAfter && atEnd,
+          })
           pieces.push({ id, leading, trailing })
           return true
         }
         for (const token of raw.matchAll(structurePattern())) {
-          if (!addText(raw.slice(offset, token.index))) return undefined
+          if (!addText(raw.slice(offset, token.index), false)) return undefined
           pieces.push(token[0])
           offset = token.index + token[0].length
         }
-        if (!addText(raw.slice(offset))) return undefined
+        if (!addText(raw.slice(offset), true)) return undefined
       }
       if (kept !== undefined) pieces.push(kept)
     }
@@ -126,7 +145,7 @@ export function segmentRequest(plan: ProtectedBatch, ids = plan.segments.map(s =
   return JSON.stringify(rows)
 }
 
-export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = plan.segments.map(s => s.id)) {
+export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = plan.segments.map(s => s.id), repairEllipses?: ReadonlySet<number>) {
   const expected = new Set(ids)
   const values = new Map<number, string>()
   const conflicts = new Set<number>()
@@ -155,12 +174,19 @@ export function parseSegmentResponse(text: string, plan: ProtectedBatch, ids = p
     const rawText = "text" in row && typeof row.text === "string" ? row.text : undefined
     const segment = plan.segments[id]
     if (!segment) { reject("unknownId"); continue }
-    const value = rawText?.trim() ?? ""
+    let value = rawText?.trim() ?? ""
     let issue: TextRejection | undefined
     if (rawText === undefined) issue = "textType"
     else if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(rawText)) issue = "control"
     else if (plan.prefixes.some(prefix => rawText.includes(prefix))) issue = "placeholder"
     else issue = segmentTextIssue(segment, value)
+    if (issue === "ellipsis" && repairEllipses?.has(id)) {
+      const cleaned = removeInlineEllipses(segment, value)
+      if (cleaned !== value && !segmentTextIssue(segment, cleaned)) {
+        value = cleaned
+        issue = undefined
+      }
+    }
     if (issue) {
       reject(issue)
       issues.set(id, issue)

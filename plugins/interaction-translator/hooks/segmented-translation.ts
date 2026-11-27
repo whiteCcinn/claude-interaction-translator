@@ -28,7 +28,7 @@ const REPAIR_GUIDANCE: Record<Exclude<SegmentRejection, "responseShape" | "unkno
   structure: "return plain text on one line without Markdown or table delimiters",
   control: "remove control characters",
   placeholder: "translate only the source prose and omit placeholders",
-  ellipsis: "remove added ellipses by rephrasing the fragment so the restored value can follow directly",
+  ellipsis: "remove added ellipses and preserve any ellipses already in the source. Where an inline code position is given, rephrase the fragment to read naturally with the value restored on that side. If the usual word order puts the value inside the phrase, recast the phrase to keep the value on its original side",
 }
 
 export async function translateProtectedFields($: EngineInterface, options: PluginOptions, configuration: ConfigurationState, prompt: string, fields: readonly ProtectedField[], maxTokens: number, signal: AbortSignal, direction?: TranslationDirection): Promise<{ texts: string[] } | Exclude<TranslationResult, { text: string }>> {
@@ -46,6 +46,7 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
   let last: SegmentValidation = { expected: ids.length, observed: 0, missing: ids.length, duplicate: 0, unexpected: 0 }
   let repairGuidance = ""
   let repairWithSchema = false
+  let repairEllipses: ReadonlySet<number> | undefined
   const predicateExamples = direction?.target === "cn" ? CHINESE_PREDICATE_EXAMPLES : ""
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
@@ -69,7 +70,7 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     const result = await pending
     if ("drop" in result) return result
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
-    const parsed = parseSegmentResponse(result.text, plan, ids)
+    const parsed = parseSegmentResponse(result.text, plan, ids, repairEllipses)
     last = parsed.validation
     for (const [id, text] of parsed.values) values.set(id, text)
     ids = unresolvedSegments(plan, values)
@@ -87,6 +88,14 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
       }
       const corrections = [...byReason].map(([issue, group]) =>
         `${group.length === 1 ? "ID" : "IDs"} ${group.join(", ")}: ${REPAIR_GUIDANCE[issue]}.`)
+      const ellipsisIds = byReason.get("ellipsis") ?? []
+      if (ellipsisIds.length) {
+        repairEllipses = new Set(ellipsisIds)
+        const before = ellipsisIds.filter(id => plan.segments[id]?.inlineBefore)
+        const after = ellipsisIds.filter(id => plan.segments[id]?.inlineAfter)
+        if (before.length) corrections.push(`Inline code will be restored immediately before these IDs: ${before.join(", ")}.`)
+        if (after.length) corrections.push(`Inline code will be restored immediately after these IDs: ${after.join(", ")}.`)
+      }
       repairGuidance = "\nCorrect these validation errors in this request:\n" + corrections.join("\n")
     }
     for (const id of ids) values.delete(id)
