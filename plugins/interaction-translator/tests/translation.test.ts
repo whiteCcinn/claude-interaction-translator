@@ -71,6 +71,48 @@ test("rejects a translation that introduces a command prefix", async ($, on) => 
   expect(result.drop).toContain("command prefix")
 })
 
+test("Codex does not submit an answer as the translation of a setting question", { options: { backend: "codex-cli" } }, async ($, on) => {
+  on("config.list", () => ({ value: [] }))
+  mock.clock(on)
+  on("ui.invalidate", () => ({ value: undefined }))
+  const source = "RetryLimit = [2, 5] 是干嘛的"
+  const question = "What does `RetryLimit = [2, 5]` do?"
+  let output = "`RetryLimit = [2, 5]` 表示在达到 **2 和 5** 时触发重试。"
+  let forwarded = 0
+  on("process.run", (_, e) => {
+    expect(e.init?.stdin).toBe(source)
+    return { value: { exitCode: 0, stdout: output, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on("prompt.submit", (_, e) => { forwarded++; return { text: e.text } })
+  for (const answer of [output, "重试上限是什么意思?", "It configures the retry limit.", "It configures retries. Would you like an example?"]) {
+    output = answer
+    const rejected = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false })
+    expect(rejected.drop).toContain("TR_INPUT_QUESTION")
+    expect(forwarded).toBe(0)
+  }
+  output = question
+  const accepted = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false })
+  expect(accepted.drop).toBe(undefined)
+  expect(forwarded).toBe(1)
+  const row = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "setting-question", message: { type: "user", content: [{ type: "text", text: source }] } })
+  expect(row.message?.content).toEqual([{ type: "text", text: question }])
+})
+
+test("API accepts a French setting question and leaves embedded-question instructions alone", { options: { backend: "api", language: "fr" } }, async ($, on) => {
+  on("config.list", () => ({ value: [] }))
+  on("env.get", () => ({ value: "example-token" }))
+  let output = "À quoi sert RetryLimit ?"
+  on("http.fetch", (_, e) => {
+    const request = JSON.parse(String(e.init?.body))
+    expect(request.messages[0].content.includes("one standalone question")).toBe(output.endsWith("?"))
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content: output } }] }) } }
+  })
+  on("prompt.submit", (_, e) => ({ text: e.text }))
+  expect((await $.prompt.submit({ text: "RetryLimit 有什么用？", origin: { kind: "sdk" }, wait: false })).text).toBe(output)
+  output = "Expliquez à quoi sert RetryLimit."
+  expect((await $.prompt.submit({ text: "请解释 RetryLimit 有什么用。", origin: { kind: "sdk" }, wait: false })).text).toBe(output)
+})
+
 test("preserves leading identifiers and allows an existing path at the start", async ($, on) => {
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))

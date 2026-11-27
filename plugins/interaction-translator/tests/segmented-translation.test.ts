@@ -144,6 +144,58 @@ test("a malformed Codex response switches its sole repair to a schema and preser
   expect(calls).toBe(2)
 })
 
+test("Codex recovers four persistent interior ellipses in a 62-span output", async () => {
+  const lines = Array.from({ length: 57 }, (_, index) => `- Check \`item_${index}\`.`)
+  const source = [...lines, "- Wait ... then check `summary`.",
+    "- `field` is missing, it returns `ERR_NOT_FOUND`.",
+    "- `group` starts with `tenant_`.",
+    "- `event` belongs to `archive`.",
+    "- Return an error from `readItem`.",
+  ].join("\n")
+  const rejected = new Map([[58, "若缺少……，则返回"], [59, "以 . . . 开头"],
+    [60, "归入⋯这个目录"], [61, "从。。。返回错误"]])
+  const repaired = new Map([[58, "缺失时返回"], [59, "前缀为"],
+    [60, "归入"], [61, "返回错误，来源为"]])
+  let now = 0
+  const sizes: number[] = []
+  const $ = engine(async (argv, init) => {
+    const input = init?.stdin ?? ""
+    const rows = JSON.parse(input) as { id: number }[]
+    sizes.push(rows.length)
+    if (sizes.length > 1) expect(rows.map(row => row.id)).toEqual([58, 59, 60, 61])
+    if (sizes.length === 3) {
+      expect(argv).toContain("/tmp/scaffold-fixture/hooks/translation-segments-no-ellipsis.schema.json")
+      expect(init?.timeoutMs).toBe(86_000)
+      const instructions = argv.find(argument => argument.startsWith("developer_instructions=")) ?? ""
+      expect(instructions).toContain("Inline code will be restored immediately after these IDs:")
+      expect(instructions + input).not.toContain("ERR_NOT_FOUND")
+      return { exitCode: 0, stdout: JSON.stringify({ segments: rows.map(({ id }) => ({ id, text: repaired.get(id) })) }), stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+    }
+    now = sizes.length === 1 ? 26_000 : 34_000
+    const stdout = JSON.stringify(rows.map(({ id }) => ({ id, text: rejected.get(id) ?? (id === 57 ? "等一等……然后检查" : "检查") })))
+    return { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  }, async () => now)
+  const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText(source), 8192, new AbortController().signal, { source: "en", target: "cn" })
+  expect(sizes).toEqual([62, 4, 4])
+  expect(result).toEqual({ text: [...lines.map(line => line.replace("Check", "检查")), "- 等一等……然后检查 `summary`.",
+    "- `field` 缺失时返回 `ERR_NOT_FOUND`.",
+    "- `group` 前缀为 `tenant_`.",
+    "- `event` 归入 `archive`.",
+    "- 返回错误，来源为 `readItem`.",
+  ].join("\n") })
+})
+
+test("Codex does not constrain a repair record whose source uses ellipses", async () => {
+  let calls = 0
+  const $ = engine(async () => {
+    calls++
+    return { exitCode: 0, stdout: '[{"id":0,"text":"确认……然后……打开"}]', stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+  })
+  const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText("Wait ... then open `summary`."), 8192, new AbortController().signal)
+  expect(calls).toBe(2)
+  expect("drop" in result && result.drop).toContain("TR_SEGMENT_INVALID")
+})
+
 test("the schema envelope still validates every ID and rejects extra top-level fields", () => {
   const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a` carefully."), field: "response" }])
   if (!plan) throw new Error("Missing plan")

@@ -2,10 +2,10 @@ import type { EngineInterface, PluginOptions } from "claude-code"
 import type { ConfigurationState } from "./configuration-runtime"
 import type { TranslationDirection } from "./languages"
 import type { protectText } from "./protected-text"
-import { assembleProtectedBatch, hasTranslationStructure, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
+import { assembleProtectedBatch, hasEllipsis, hasTranslationStructure, parseSegmentResponse, prepareProtectedBatch, segmentRequest, unresolvedSegments } from "./protected-segments"
 import type { ProtectedField, SegmentRejection, SegmentValidation } from "./protected-segments"
 import { requestTranslation, translationFailure } from "./translation-client"
-import type { TranslationResult } from "./translation-client"
+import type { CodexSegmentSchema, TranslationResult } from "./translation-client"
 import { diagnosticTime } from "./translation-diagnostics"
 import { DEFAULT_CODEX_TIMEOUT_SECONDS } from "./configuration"
 
@@ -19,7 +19,9 @@ const SEGMENT_INSTRUCTIONS = [
 ].join("\n")
 
 const SCHEMA_REPAIR_INSTRUCTIONS = "The previous response was not a readable batch. Preserve each fragment's action and object even when it ends with a preposition before hidden code. For example, translate all of 'checks the configuration with', including 'checks the configuration', rather than just 'with'."
+const SCHEMA_ELLIPSIS_INSTRUCTIONS = "\nThe schema forbids ellipses. Recast around the fixed code positions without substituting any other stand-in. Preserve the original actions, conditions and relationships."
 const CHINESE_PREDICATE_EXAMPLES = "\nFor Simplified Chinese predicates immediately before protected values, use ‘位于’ for ‘is in’ and ‘前缀为’ for ‘starts with’."
+const CHINESE_ELLIPSIS_EXAMPLES = "\nFor Simplified Chinese, recast ‘is missing, it returns’ between two code values as ‘缺失时返回’, and ‘and drop out of’ before a code value as ‘并不再计入’."
 
 const REPAIR_GUIDANCE: Record<Exclude<SegmentRejection, "responseShape" | "unknownId">, string> = {
   textType: "return the translation as a JSON string",
@@ -45,10 +47,10 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
   const configuredSeconds = typeof options.codex_timeout_seconds === "number" ? options.codex_timeout_seconds : DEFAULT_CODEX_TIMEOUT_SECONDS
   let last: SegmentValidation = { expected: ids.length, observed: 0, missing: ids.length, duplicate: 0, unexpected: 0 }
   let repairGuidance = ""
-  let repairWithSchema = false
+  let repairSchema: CodexSegmentSchema | undefined
   let repairEllipses: ReadonlySet<number> | undefined
   const predicateExamples = direction?.target === "cn" ? CHINESE_PREDICATE_EXAMPLES : ""
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
     let remainingMs: number | undefined
     if (attempt > 0 && options.backend === "codex-cli" && startedAt !== undefined) {
@@ -59,13 +61,13 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
       }
     }
     const started = attempt === 0 ? diagnosticTime($) : undefined
-    const responseFormat = repairWithSchema
+    const responseFormat = repairSchema
       ? 'Return only a JSON object with a single "segments" array of {id,text}, with every requested id exactly once.'
       : "Return only a JSON array of {id,text}, with every requested id exactly once."
     const instructions = `${prompt}\nTranslate a JSON array of numbered nonempty prose spans. ${responseFormat}\n${SEGMENT_INSTRUCTIONS}${predicateExamples}${repairGuidance}`
     // Start the first request before awaiting its diagnostic clock so a
     // prioritized question cannot be overtaken by a plain assistant request.
-    const pending = requestTranslation($, options, configuration, instructions, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, { remainingMs, segmentSchema: repairWithSchema })
+    const pending = requestTranslation($, options, configuration, instructions, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, { remainingMs, segmentSchema: repairSchema })
     if (started) startedAt = await started
     const result = await pending
     if ("drop" in result) return result
@@ -76,10 +78,20 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     ids = unresolvedSegments(plan, values)
     const texts = assembleProtectedBatch(plan, values)
     if (texts) return { texts }
+    if (attempt === 2) break
+    if (attempt === 1) {
+      // This fallback is only for records still rejected for new ellipses.
+      // A source ellipsis must stay available to the translator.
+      if (options.backend !== "codex-cli" || !ids.every(id => {
+        const source = plan.segments[id]
+        return source !== undefined && parsed.issues.get(id) === "ellipsis" && !hasEllipsis(source.text)
+      })) break
+      repairSchema = "no-ellipsis"
+    }
     if (attempt === 0 && options.backend === "codex-cli" && last.rejected?.responseShape === 1) {
-      repairWithSchema = true
+      repairSchema = "standard"
       repairGuidance = "\n" + SCHEMA_REPAIR_INSTRUCTIONS
-    } else if (attempt === 0 && parsed.issues.size) {
+    } else if (parsed.issues.size) {
       const byReason = new Map<keyof typeof REPAIR_GUIDANCE, number[]>()
       for (const [id, issue] of parsed.issues) {
         const group = byReason.get(issue)
@@ -97,6 +109,10 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
         if (after.length) corrections.push(`Inline code will be restored immediately after these IDs: ${after.join(", ")}.`)
       }
       repairGuidance = "\nCorrect these validation errors in this request:\n" + corrections.join("\n")
+      if (repairSchema === "no-ellipsis") {
+        repairGuidance += SCHEMA_ELLIPSIS_INSTRUCTIONS
+        if (direction?.target === "cn") repairGuidance += CHINESE_ELLIPSIS_EXAMPLES
+      }
     }
     for (const id of ids) values.delete(id)
   }

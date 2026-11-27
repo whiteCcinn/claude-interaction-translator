@@ -11,14 +11,14 @@ export type TranslationFailure =
   | { kind: "api-http"; status: number }
   | { kind: "markers"; validation?: MarkerValidation }
   | { kind: "segments"; validation: SegmentValidation }
-  | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-handoff" | "queue" | "capacity" | "unknown" }
+  | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-question" | "input-handoff" | "queue" | "capacity" | "unknown" }
 
 const ERROR_CODES: Record<TranslationFailure["kind"], string> = {
   timeout: "TR_CLI_TIMEOUT", "codex-exit": "TR_CLI_EXIT", "codex-process": "TR_CLI_PROCESS",
   empty: "TR_CLI_EMPTY", truncated: "TR_CLI_TRUNCATED", markers: "TR_TEXT_INVALID", segments: "TR_SEGMENT_INVALID",
   configuration: "TR_CONFIG", credentials: "TR_API_KEY", "api-url": "TR_API_URL",
   "api-http": "TR_API_HTTP", "api-request": "TR_API_REQUEST", "api-response": "TR_API_RESPONSE", "api-length": "TR_API_LENGTH",
-  "command-prefix": "TR_INPUT_PREFIX", "input-handoff": "TR_INPUT_HANDOFF", queue: "TR_QUEUE", capacity: "TR_CAPACITY", unknown: "TR_UNKNOWN",
+  "command-prefix": "TR_INPUT_PREFIX", "input-question": "TR_INPUT_QUESTION", "input-handoff": "TR_INPUT_HANDOFF", queue: "TR_QUEUE", capacity: "TR_CAPACITY", unknown: "TR_UNKNOWN",
 }
 
 export function translationFailureCode(failure: TranslationFailure): string { return ERROR_CODES[failure.kind] }
@@ -78,6 +78,12 @@ export function translationFailureHint(failure: TranslationFailure, language: La
       en: "The translation introduced a command prefix. Submission was blocked; retry.",
       jp: "翻訳に新しいコマンド接頭辞が含まれたため、送信を停止しました。再試行してください。",
       fr: "La traduction a ajouté un préfixe de commande. L’envoi a été bloqué ; réessayez.",
+    }[language]
+    case "input-question": return {
+      cn: "译文未保留原问题的问句形式，已阻止提交。请重试。",
+      en: "The translation did not preserve the input as a question. Retry the translation.",
+      jp: "元の質問が疑問文として翻訳されなかったため、送信を停止しました。再試行してください。",
+      fr: "La traduction n’a pas conservé la forme interrogative du texte source. Réessayez.",
     }[language]
     case "input-handoff": return {
       cn: "输入译文交付失败或等待队列已满，请处理待发送消息后重试。",

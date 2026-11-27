@@ -26,6 +26,8 @@ const strandedArticle = /^([ \t]*[.!?][ \t]+)the[ \t]+$/i
 // list marker or a heading followed by a section number.
 const spanPrefix = /^[ \t]*(?:(?:#{1,6}|[-+*]|\d+[.)])[ \t]+|>[ \t]*)+/
 
+export function hasEllipsis(text: string): boolean { return text.match(ellipsisPattern) !== null }
+
 // Match only local syntax, never protected values. In particular, line endings
 // and table pipes must not depend on a model preserving an otherwise empty gap.
 // Escaped delimiters stay together so a literal pipe cannot become a table cell.
@@ -50,7 +52,7 @@ function segmentTextIssue(segment: Segment, value: string): TextRejection | unde
 function removeInlineEllipses(segment: Segment, value: string): string {
   // Preserve source ellipses and only remove placeholders at the exact edge
   // where an existing inline code value will be restored in the same clause.
-  if (segment.text.match(ellipsisPattern)) return value
+  if (hasEllipsis(segment.text)) return value
   const before = segment.inlineBefore && /^[\p{L}\p{N}]/u.test(segment.text)
   const after = segment.inlineAfter && /[\p{L}\p{N}]$/u.test(segment.text)
   if (!before && !after) return value

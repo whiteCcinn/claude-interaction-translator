@@ -60,7 +60,12 @@ export function translationFailure(failure: TranslationFailure): Exclude<Transla
   return { drop: `[${translationFailureCode(failure)}] ${translationFailureHint(failure, "en")} This prompt was not sent.`, hint: translationFailureHint(failure, "cn"), failure }
 }
 
-type CodexRequestOptions = { remainingMs?: number; segmentSchema?: boolean }
+const segmentSchemaFiles = {
+  standard: "translation-segments.schema.json",
+  "no-ellipsis": "translation-segments-no-ellipsis.schema.json",
+}
+export type CodexSegmentSchema = keyof typeof segmentSchemaFiles
+type CodexRequestOptions = { remainingMs?: number; segmentSchema?: CodexSegmentSchema }
 
 async function translateWithCodex($: EngineInterface, options: PluginOptions, prompt: string, text: string, signal: AbortSignal, { remainingMs, segmentSchema }: CodexRequestOptions): Promise<TranslationResult> {
   const timeoutSeconds = typeof options.codex_timeout_seconds === "number" ? options.codex_timeout_seconds : DEFAULT_CODEX_TIMEOUT_SECONDS
@@ -79,7 +84,7 @@ async function translateWithCodex($: EngineInterface, options: PluginOptions, pr
     const result = await $.process.run([
       executable, "exec", "--ephemeral", "--skip-git-repo-check",
       "--sandbox", "read-only", "--color", "never",
-      ...(segmentSchema ? ["--output-schema", `${$.plugin.root}/hooks/translation-segments.schema.json`] : []),
+      ...(segmentSchema ? ["--output-schema", `${$.plugin.root}/hooks/${segmentSchemaFiles[segmentSchema]}`] : []),
       "-c", "project_doc_max_bytes=0",
       "-c", "features.shell_tool=false",
       "-c", `developer_instructions=${JSON.stringify(instructions)}`,

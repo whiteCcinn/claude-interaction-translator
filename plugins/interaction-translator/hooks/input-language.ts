@@ -32,6 +32,19 @@ function detectionProse(source: string): { text: string; hadLetters: boolean } {
   return { text, hadLetters: /\p{L}/u.test(unprotected) }
 }
 
+// Require a standalone identifier or assignment so an instruction such as
+// "请解释 RetryLimit 有什么用" keeps its imperative form.
+export function isChineseSettingQuestion(source: string): boolean {
+  return /^(?:`[^`\r\n]+`|[A-Za-z_$][\w.$-]*(?:[ \t]*=[ \t]*[ -~]+?)?)[ \t]*(?:是干(?:嘛|吗|什么)的|是做什么的|有什么用|是什么意思|用来做什么|是什么)[ \t]*[?？]?$/u.test(source.trim())
+}
+
+export function preservesSettingQuestion(translation: string, target: "en" | "fr"): boolean {
+  const { text } = detectionProse(translation)
+  if (!text.endsWith("?") || !/\p{Script=Latin}/u.test(text) || /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)) return false
+  const [, extraSentence] = new Intl.Segmenter(target, { granularity: "sentence" }).segment(text)
+  return extraSentence === undefined
+}
+
 function sentenceMatches(prose: string, target: Language): boolean {
   const han = /\p{Script=Han}/u.test(prose)
   const kana = /\p{Script=Hiragana}|\p{Script=Katakana}|[ーｰ]/u.test(prose)

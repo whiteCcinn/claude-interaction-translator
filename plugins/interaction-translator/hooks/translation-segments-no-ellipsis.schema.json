@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "text": {
+            "type": "string",
+            "pattern": "^(?:[ \\u00a0\\u202f]*(?:[^…⋯.．。 \\u00a0\\u202f]|[.．。][ \\u00a0\\u202f]*(?:[.．。][ \\u00a0\\u202f]*)?[^…⋯.．。 \\u00a0\\u202f]))*[ \\u00a0\\u202f]*(?:[.．。][ \\u00a0\\u202f]*(?:[.．。][ \\u00a0\\u202f]*)?)?$"
+          }
+        },
+        "required": ["id", "text"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["segments"],
+  "additionalProperties": false
+}

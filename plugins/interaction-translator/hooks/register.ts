@@ -7,7 +7,7 @@ import type { Feedback, FeedbackState } from "./translation-feedback"
 import { DEFAULT_API_MODEL } from "./configuration"
 import { configurationTarget, initializeConfiguration } from "./configuration-runtime"
 import type { ConfigurationState } from "./configuration-runtime"
-import { TRANSLATION_FAILURE as FAILURE } from "./translation-client"
+import { TRANSLATION_FAILURE as FAILURE, translationFailure } from "./translation-client"
 import { protectedTextFormat, translateProtectedText } from "./segmented-translation"
 import { translationFailureHint } from "./translation-errors"
 import type { TranslationFailure } from "./translation-errors"
@@ -16,7 +16,7 @@ import { assistantDisplayAllowed, automaticQuestionDisplay, cancelFinalDisplay, 
 import { parseQuestions, questionSource, questionTranslationLoading } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, submittedInputText, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
-import { canSkipInputTranslation } from "./input-language"
+import { canSkipInputTranslation, isChineseSettingQuestion, preservesSettingQuestion } from "./input-language"
 import { beginFinalStep, beginFinalSubmission, clearFinalOutput, completeFinalOutput, createFinalOutputState, finishFinalStep, finishFinalSubmission, recordFinalResponse, recordFinalStart, refreshFinalOutput, takeFinalDisplay } from "./final-output"
 import type { FinalOutputState, FinalStep } from "./final-output"
 import { queuedInput } from "./queued-input"
@@ -388,6 +388,10 @@ export function register(on: On, options: PluginOptions) {
     let inputAccepted = false
     const chips = translateBeforeQueue ? [...new Set(source.match(IMAGE_CHIP) ?? [])] : []
     const protectedText = protectText(source, chips)
+    const questionTarget = (code === "en" || code === "fr") && isChineseSettingQuestion(source) ? code : undefined
+    const questionInstructions = questionTarget
+      ? "\nTranslate this input as one standalone question. End the translation with a question mark."
+      : ""
     let errorHint = "请检查网络后重试。"
     let inputFailure: TranslationFailure | undefined
     let current: Feedback | undefined
@@ -395,7 +399,9 @@ export function register(on: On, options: PluginOptions) {
       if (!skipTranslation && e.origin.kind === "composer") current = await startFeedback($, feedback, "input", languages.input, code, next.signal)
       if (next.signal.aborted) return { drop: "Translation cancelled; this prompt was not sent." }
       const result = skipTranslation ? { text: source }
-        : await translateProtectedText($, options, configuration, translationPrompt(code, languages.input, "instructions", protectedTextFormat(protectedText)), protectedText, 1024, next.signal, { source: languages.input, target: code })
+        : await translateProtectedText($, options, configuration,
+          translationPrompt(code, languages.input, "instructions", protectedTextFormat(protectedText)) + questionInstructions,
+          protectedText, 1024, next.signal, { source: languages.input, target: code })
       if ("drop" in result) {
         inputFailure = result.failure ?? { kind: "unknown" }
         errorHint = result.hint ?? (useCodex ? "请检查 Codex CLI 路径、登录状态和配置。" : errorHint)
@@ -415,6 +421,13 @@ export function register(on: On, options: PluginOptions) {
         errorHint = "译文出现额外命令前缀，请重试。"
         translated = undefined
         return { drop: "The translation introduced a command prefix. This prompt was not sent; retry." }
+      }
+      if (questionTarget && !preservesSettingQuestion(translated, questionTarget)) {
+        inputFailure = { kind: "input-question" }
+        const failure = translationFailure(inputFailure)
+        errorHint = failure.hint ?? errorHint
+        translated = undefined
+        return { drop: failure.drop }
       }
       translated = leadingTag + translated
 
