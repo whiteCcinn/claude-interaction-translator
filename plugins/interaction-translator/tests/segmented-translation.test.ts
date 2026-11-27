@@ -196,6 +196,43 @@ test("Codex does not constrain a repair record whose source uses ellipses", asyn
   expect("drop" in result && result.drop).toContain("TR_SEGMENT_INVALID")
 })
 
+test("Codex retries a lone short span as plain text and validates it under the shared deadline", async () => {
+  const lines = Array.from({ length: 162 }, (_, index) => `- Inspect \`entry_${index}\`.`)
+  const fragment = "The worker validates the result and records missing IDs before returning"
+  const source = [...lines, `- ${fragment} \`sample_status\`.`].join("\n")
+  const valid = "工作进程校验结果并记录缺失的编号，然后返回"
+  for (const finalText of [valid, "检查"]) {
+    const calls: number[] = []
+    let now = 0
+    const $ = engine(async (argv, init) => {
+      const input = init?.stdin ?? ""
+      if (calls.length === 2) {
+        calls.push(1)
+        expect(input).toBe(fragment)
+        expect(init?.timeoutMs).toBe(52_000)
+        expect(argv).not.toContain("--output-schema")
+        const instructions = argv.find(argument => argument.startsWith("developer_instructions=")) ?? ""
+        expect(instructions).toContain("return only the complete translated fragment as plain text")
+        expect(instructions + input).not.toContain("sample_status")
+        return { exitCode: 0, stdout: finalText, stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+      }
+      const rows = JSON.parse(input) as { id: number }[]
+      calls.push(rows.length)
+      if (calls.length === 2) expect(rows.map(row => row.id)).toEqual([162])
+      now = calls.length === 1 ? 60_000 : 68_000
+      const stdout = JSON.stringify(rows.map(({ id }) => ({ id, text: "检查" })))
+      return { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false }
+    }, async () => now)
+    const result = await translateProtectedText($, cli, {}, "Translate into Chinese.", protectText(source), 8192, new AbortController().signal, { source: "en", target: "cn" })
+    expect(calls).toEqual([163, 1, 1])
+    if (finalText === valid) expect(result).toEqual({ text: [...lines.map(line => line.replace("Inspect", "检查")), `- ${valid} \`sample_status\`.`].join("\n") })
+    else {
+      expect("drop" in result && result.drop).toContain("TR_SEGMENT_INVALID")
+      expect("failure" in result && result.failure?.kind === "segments" && result.failure.validation.rejected).toEqual({ short: 1 })
+    }
+  }
+})
+
 test("the schema envelope still validates every ID and rejects extra top-level fields", () => {
   const plan = prepareProtectedBatch([{ protectedText: protectText("Read `/tmp/a` carefully."), field: "response" }])
   if (!plan) throw new Error("Missing plan")

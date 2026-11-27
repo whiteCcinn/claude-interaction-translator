@@ -121,6 +121,23 @@ test("the length guard still rejects loss of the subject before a protected name
   expect(assembleProtectedBatch(plan, parsed.values)).toBe(undefined)
 })
 
+test("CJK inline article handling preserves headings, emphasis, table cells and meaningful words", () => {
+  const source = "- **The `trace` type stays available.**\n> 1. The `reader` remains optional.\n| The `field` exists. | No `clock` needed. |\n**The** `literal`\nThe summary stays available."
+  const fields = [{ protectedText: protectText(source), field: "prose" }]
+  const sourceSpans = ["type stays available.", "remains optional.", "exists.", "No", "needed.", "The", "The summary stays available."]
+  for (const target of ["cn", "jp"] as const) {
+    const plan = prepareProtectedBatch(fields, { source: "en", target })
+    if (!plan) throw new Error("Missing translation plan")
+    expect(plan.segments.map(row => row.text)).toEqual(sourceSpans)
+    const values = new Map(sourceSpans.map((text, id) => [id, text]))
+    expect(assembleProtectedBatch(plan, values)).toEqual([source.replaceAll("The `", "`")])
+  }
+  for (const direction of [{ source: "en", target: "fr" }, { source: "auto", target: "cn" }] as const) {
+    const plan = prepareProtectedBatch(fields, direction)
+    expect(plan?.segments.filter(row => row.text === "The").length).toBe(4)
+  }
+})
+
 test("prose validation rejects invented ellipses and allows a source ellipsis in another style", () => {
   const plan = planFor("Reason . . . then check `name`.")
   const parse = (text: string) => parseSegmentResponse(JSON.stringify([{ id: 0, text }]), plan)
@@ -229,6 +246,28 @@ test("Codex display translation keeps a stranded article out of the requested pr
   await clock.advance(300)
   expect(calls).toBe(1)
   expect(await ui.find({ type: "Markdown", text: "读取 `entry`. `records` 表存储 ID。" })).toBeDefined()
+  await ui.unmount()
+})
+
+test("an isolated article cannot turn a 163-span reply into a short translation failure", { options: { backend: "codex-cli", output_trigger: "auto", output_language: "cn", claude_language: "en" } }, async ($, on) => {
+  const clock = mock.clock(on)
+  on("config.list", () => ({ value: [] }))
+  on("ui.render", { component: "AssistantMessage" }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  const lines = Array.from({ length: 161 }, (_, index) => `- Inspect \`entry_${index}\`.`)
+  const source = [...lines, "- **The `clock` remains optional.**"].join("\n")
+  const requestSizes: number[] = []
+  on("process.run", (_, e) => {
+    const rows = JSON.parse(e.init?.stdin ?? "") as { id: number; text: string }[]
+    requestSizes.push(rows.length)
+    const translations = new Map([["Inspect", "检查"], ["The", "。"], ["remains optional.", "仍为可选项。"]])
+    const stdout = JSON.stringify(rows.map(({ id, text }) => ({ id, text: translations.get(text) })))
+    return { value: { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await mountFreshDisplay($, { plugin: "interaction-translator", surface: "terminal", component: "AssistantMessage", props: { text: source, isFirstOfReply: true } })
+  await clock.advance(300)
+  expect(requestSizes).toEqual([162])
+  const translated = [...lines.map(line => line.replace("Inspect", "检查")), "- **`clock` 仍为可选项。**"].join("\n")
+  expect(await ui.find({ type: "Markdown", text: translated })).toBeDefined()
   await ui.unmount()
 })
 

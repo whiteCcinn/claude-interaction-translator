@@ -21,7 +21,7 @@ export const MAX_TEXT_SEGMENTS = 512
 const meaningful = /[\p{L}\p{N}]/u
 const ellipsisPattern = /(?:[…⋯]|[.．。](?:[ \u00a0\u202f]*[.．。]){2})(?:[ \u00a0\u202f]*[.…⋯．。])*/g
 const inlineCode = /^`[^`\r\n]+`$/
-const strandedArticle = /^([ \t]*[.!?][ \t]+)the[ \t]+$/i
+const strandedArticle = /^([ \t]*(?:[.!?][ \t]+)?)the[ \t]+$/i
 // A prefix can contain consecutive markers, such as a quote followed by a
 // list marker or a heading followed by a section number.
 const spanPrefix = /^[ \t]*(?:(?:#{1,6}|[-+*]|\d+[.)])[ \t]+|>[ \t]*)+/
@@ -88,21 +88,24 @@ export function prepareProtectedBatch(fields: readonly ProtectedField[], directi
     const pieces: Piece[] = []
     for (const [gap, raw] of gaps.entries()) {
       const kept = keeps[gap]
-      // In "name. The [inline code] ...", the article only introduces the
-      // following name. Chinese and Japanese do not need a word before it.
-      const sentenceBoundary = omitStrandedArticle && kept !== undefined && inlineCode.test(kept)
-        ? strandedArticle.exec(raw)?.[1] : undefined
-      if (sentenceBoundary !== undefined) pieces.push(sentenceBoundary)
+      const inlineAfter = kept !== undefined && inlineCode.test(kept)
+      const mayOmitArticle = omitStrandedArticle && inlineAfter
+      // Recognize a whole gap before splitting tabs so sentence punctuation
+      // and its spacing stay local, as in "name. The [inline code] ...".
+      const articleBoundary = mayOmitArticle ? strandedArticle.exec(raw)?.[1] : undefined
+      if (articleBoundary !== undefined) pieces.push(articleBoundary)
       else if (!translate) pieces.push(raw)
       else {
         const inlineBefore = inlineCode.test(keeps[gap - 1] ?? "")
-        const inlineAfter = kept !== undefined && inlineCode.test(kept)
         let offset = 0
         const addText = (span: string, atEnd: boolean): boolean => {
           // A numbered heading can begin inside emphasis, e.g. **1. Title**.
           // Identify prefixes after every local delimiter, not just raw lines.
           const prefix = spanPrefix.exec(span)?.[0]
           if (prefix) { pieces.push(prefix); span = span.slice(prefix.length) }
+          // Also handle articles at the start of a heading, emphasis or cell.
+          const boundary = atEnd && mayOmitArticle ? strandedArticle.exec(span)?.[1] : undefined
+          if (boundary !== undefined) { pieces.push(boundary); return true }
           const leading = /^\s*/u.exec(span)?.[0] ?? ""
           const rest = span.slice(leading.length)
           const trailing = /\s*$/u.exec(rest)?.[0] ?? ""

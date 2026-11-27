@@ -22,6 +22,11 @@ const SCHEMA_REPAIR_INSTRUCTIONS = "The previous response was not a readable bat
 const SCHEMA_ELLIPSIS_INSTRUCTIONS = "\nThe schema forbids ellipses. Recast around the fixed code positions without substituting any other stand-in. Preserve the original actions, conditions and relationships."
 const CHINESE_PREDICATE_EXAMPLES = "\nFor Simplified Chinese predicates immediately before protected values, use ‘位于’ for ‘is in’ and ‘前缀为’ for ‘starts with’."
 const CHINESE_ELLIPSIS_EXAMPLES = "\nFor Simplified Chinese, recast ‘is missing, it returns’ between two code values as ‘缺失时返回’, and ‘and drop out of’ before a code value as ‘并不再计入’."
+const SINGLE_REPAIR_INSTRUCTIONS = [
+  "Translate all of it and return only the complete translated fragment as plain text on one line. Preserve each action, actor, quantity and qualifier.",
+  "Code at the indicated positions will be restored locally. If the source ends with a verb that takes the following code as its object, recast the fragment so that object can still directly follow the translated verb. Do not add placeholders or Markdown.",
+].join("\n")
+const CHINESE_SINGLE_REPAIR_EXAMPLE = "\nFor example, before protected code, translate ‘checks the record before returning’ as ‘先检查记录，再返回’ so the returned value can follow directly."
 
 const REPAIR_GUIDANCE: Record<Exclude<SegmentRejection, "responseShape" | "unknownId">, string> = {
   textType: "return the translation as a JSON string",
@@ -48,6 +53,7 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
   let last: SegmentValidation = { expected: ids.length, observed: 0, missing: ids.length, duplicate: 0, unexpected: 0 }
   let repairGuidance = ""
   let repairSchema: CodexSegmentSchema | undefined
+  let repairAsText: number | undefined
   let repairEllipses: ReadonlySet<number> | undefined
   const predicateExamples = direction?.target === "cn" ? CHINESE_PREDICATE_EXAMPLES : ""
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -64,15 +70,21 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     const responseFormat = repairSchema
       ? 'Return only a JSON object with a single "segments" array of {id,text}, with every requested id exactly once.'
       : "Return only a JSON array of {id,text}, with every requested id exactly once."
-    const instructions = `${prompt}\nTranslate a JSON array of numbered nonempty prose spans. ${responseFormat}\n${SEGMENT_INSTRUCTIONS}${predicateExamples}${repairGuidance}`
+    const singleSpan = repairAsText === undefined ? undefined : plan.segments[repairAsText]
+    const shortExample = singleSpan?.inlineAfter && direction?.target === "cn" ? CHINESE_SINGLE_REPAIR_EXAMPLE : ""
+    const instructions = singleSpan
+      ? `${prompt}\nThe input is the source prose for ID ${singleSpan.id}.\n${SINGLE_REPAIR_INSTRUCTIONS}${shortExample}${repairGuidance}`
+      : `${prompt}\nTranslate a JSON array of numbered nonempty prose spans. ${responseFormat}\n${SEGMENT_INSTRUCTIONS}${predicateExamples}${repairGuidance}`
     // Start the first request before awaiting its diagnostic clock so a
     // prioritized question cannot be overtaken by a plain assistant request.
-    const pending = requestTranslation($, options, configuration, instructions, segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, { remainingMs, segmentSchema: repairSchema })
+    const pending = requestTranslation($, options, configuration, instructions, singleSpan?.text ?? segmentRequest(plan, ids), Math.min(8192, maxTokens + ids.length * 24), signal, { remainingMs, segmentSchema: repairSchema })
     if (started) startedAt = await started
     const result = await pending
     if ("drop" in result) return result
     if (signal.aborted) return { drop: "Translation cancelled; this text was not forwarded." }
-    const parsed = parseSegmentResponse(result.text, plan, ids, repairEllipses)
+    // The plain-text repair still passes through the same record validator.
+    const response = singleSpan ? JSON.stringify([{ id: singleSpan.id, text: result.text }]) : result.text
+    const parsed = parseSegmentResponse(response, plan, ids, repairEllipses)
     last = parsed.validation
     for (const [id, text] of parsed.values) values.set(id, text)
     ids = unresolvedSegments(plan, values)
@@ -80,13 +92,17 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
     if (texts) return { texts }
     if (attempt === 2) break
     if (attempt === 1) {
-      // This fallback is only for records still rejected for new ellipses.
-      // A source ellipsis must stay available to the translator.
-      if (options.backend !== "codex-cli" || !ids.every(id => {
+      if (options.backend !== "codex-cli") break
+      const [onlyId] = ids
+      if (ids.length === 1 && onlyId !== undefined && parsed.issues.get(onlyId) === "short") {
+        repairAsText = onlyId
+        repairSchema = undefined
+      } else if (ids.every(id => {
+        // A source ellipsis must stay available to the translator.
         const source = plan.segments[id]
         return source !== undefined && parsed.issues.get(id) === "ellipsis" && !hasEllipsis(source.text)
-      })) break
-      repairSchema = "no-ellipsis"
+      })) repairSchema = "no-ellipsis"
+      else break
     }
     if (attempt === 0 && options.backend === "codex-cli" && last.rejected?.responseShape === 1) {
       repairSchema = "standard"
@@ -101,13 +117,12 @@ export async function translateProtectedFields($: EngineInterface, options: Plug
       const corrections = [...byReason].map(([issue, group]) =>
         `${group.length === 1 ? "ID" : "IDs"} ${group.join(", ")}: ${REPAIR_GUIDANCE[issue]}.`)
       const ellipsisIds = byReason.get("ellipsis") ?? []
-      if (ellipsisIds.length) {
-        repairEllipses = new Set(ellipsisIds)
-        const before = ellipsisIds.filter(id => plan.segments[id]?.inlineBefore)
-        const after = ellipsisIds.filter(id => plan.segments[id]?.inlineAfter)
-        if (before.length) corrections.push(`Inline code will be restored immediately before these IDs: ${before.join(", ")}.`)
-        if (after.length) corrections.push(`Inline code will be restored immediately after these IDs: ${after.join(", ")}.`)
-      }
+      if (ellipsisIds.length) repairEllipses = new Set(ellipsisIds)
+      const anchored = [...ellipsisIds, ...(byReason.get("short") ?? [])]
+      const before = anchored.filter(id => plan.segments[id]?.inlineBefore)
+      const after = anchored.filter(id => plan.segments[id]?.inlineAfter)
+      if (before.length) corrections.push(`Inline code will be restored immediately before these IDs: ${before.join(", ")}.`)
+      if (after.length) corrections.push(`Inline code will be restored immediately after these IDs: ${after.join(", ")}.`)
       repairGuidance = "\nCorrect these validation errors in this request:\n" + corrections.join("\n")
       if (repairSchema === "no-ellipsis") {
         repairGuidance += SCHEMA_ELLIPSIS_INSTRUCTIONS
