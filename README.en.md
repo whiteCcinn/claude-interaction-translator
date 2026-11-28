@@ -162,6 +162,8 @@ Send text or screenshots while Claude is working. Screenshot prompts are transla
 
 Before input translation, a local check examines the natural-language instructions. Confident matches to the prompt language pass through unchanged, without a translation API/Codex call or input progress card. For example, English input can go directly to an English prompt target; Claude's reply language still follows its separate setting. Code, paths and URLs do not influence detection. Mixed, uncertain or oversized input keeps the normal translation path.
 
+For English and French prompt targets, clearly untranslated Chinese or Japanese prose is blocked with `TR_INPUT_LANGUAGE` before the message reaches Claude. The check examines prose after excluding code, paths, and URLs.
+
 | Mode | Interactive UI | Model history | `claude -p` |
 | --- | --- | --- | --- |
 | `display-only` (default) | Assistant replies follow `manual / final / auto`; question panels always translate automatically | Claude's original reply, English by default | Original reply; no output translation call |

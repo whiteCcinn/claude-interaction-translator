@@ -98,6 +98,47 @@ test("Codex does not submit an answer as the translation of a setting question",
   expect(row.message?.content).toEqual([{ type: "text", text: question }])
 })
 
+test("Codex blocks a Chinese paraphrase of a mixed technical question before composer handoff", { options: { backend: "codex-cli", language: "en" } }, async ($, on) => {
+  on("config.list", () => ({ value: [] }))
+  mock.clock(on)
+  on("ui.invalidate", () => ({ value: undefined }))
+  const source = "补录用的是昨天的数据，callback和scan用的是今天的数据，对吗？"
+  const question = "The backfill uses yesterday's data, and callback and scan use today's data, right?"
+  let output = "“补录”是昨天的数据；callback 和 scan 的是今天的数据，对吧？"
+  let forwarded = 0
+  on("process.run", (_, e) => {
+    expect(e.argv.find(arg => arg.startsWith("developer_instructions="))).toContain("Translate foreign prose even when it contains target-language names or technical terms")
+    return { value: { exitCode: 0, stdout: output, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on("prompt.submit", (_, e) => { forwarded++; return { text: e.text } })
+  const rejected = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false })
+  expect(rejected.drop).toContain("TR_INPUT_LANGUAGE")
+  expect(forwarded).toBe(0)
+
+  output = question
+  const accepted = await $.prompt.submit({ text: source, origin: { kind: "composer" }, wait: false })
+  expect(accepted.drop).toBe(undefined)
+  expect(forwarded).toBe(1)
+  const row = await $.session.append({ door: "prompt", origin: { kind: "composer" }, uuid: "mixed-language-question", message: { type: "user", content: [{ type: "text", text: source }] } })
+  expect(row.message?.content).toEqual([{ type: "text", text: question }])
+})
+
+test("API SDK rejects untranslated prose after restoring a protected literal", { options: { backend: "api", input_language: "auto", language: "fr" } }, async ($, on) => {
+  on("config.list", () => ({ value: [] }))
+  on("env.get", () => ({ value: "example-token" }))
+  const source = "请核对回调是否使用 `昨天`。"
+  let output = "请检查回调有没有使用 __GLM_KEEP_0__。"
+  on("http.fetch", (_, e) => {
+    const request = JSON.parse(String(e.init?.body))
+    const content = segmentResponse(request.messages[1].content, output)
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify({ choices: [{ message: { content } }] }) } }
+  })
+  on("prompt.submit", (_, e) => ({ text: e.text }))
+  expect((await $.prompt.submit({ text: source, origin: { kind: "sdk" }, wait: false })).drop).toContain("TR_INPUT_LANGUAGE")
+  output = "Vérifiez si le rappel utilise __GLM_KEEP_0__。"
+  expect((await $.prompt.submit({ text: source, origin: { kind: "sdk" }, wait: false })).text).toBe("Vérifiez si le rappel utilise `昨天`。")
+})
+
 test("API accepts a French setting question and leaves embedded-question instructions alone", { options: { backend: "api", language: "fr" } }, async ($, on) => {
   on("config.list", () => ({ value: [] }))
   on("env.get", () => ({ value: "example-token" }))

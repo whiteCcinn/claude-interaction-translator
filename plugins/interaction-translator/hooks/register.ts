@@ -16,7 +16,7 @@ import { assistantDisplayAllowed, automaticQuestionDisplay, cancelFinalDisplay, 
 import { parseQuestions, questionSource, questionTranslationLoading } from "./question-translation"
 import { clearPreparedInputs, discardPreparedInput, hasPendingPreparedInputs, prepareInput, submittedInputText, takePreparedInput } from "./input-history"
 import type { PreparedInput } from "../types"
-import { canSkipInputTranslation, isChineseSettingQuestion, preservesSettingQuestion } from "./input-language"
+import { canSkipInputTranslation, hasUntranslatedCjkInput, isChineseSettingQuestion, preservesSettingQuestion } from "./input-language"
 import { beginFinalStep, beginFinalSubmission, clearFinalOutput, completeFinalOutput, createFinalOutputState, finishFinalStep, finishFinalSubmission, recordFinalResponse, recordFinalStart, refreshFinalOutput, takeFinalDisplay } from "./final-output"
 import type { FinalOutputState, FinalStep } from "./final-output"
 import { queuedInput } from "./queued-input"
@@ -422,8 +422,9 @@ export function register(on: On, options: PluginOptions) {
         translated = undefined
         return { drop: "The translation introduced a command prefix. This prompt was not sent; retry." }
       }
-      if (questionTarget && !preservesSettingQuestion(translated, questionTarget)) {
-        inputFailure = { kind: "input-question" }
+      const invalidQuestion = questionTarget && !preservesSettingQuestion(translated, questionTarget)
+      if (invalidQuestion || (!skipTranslation && hasUntranslatedCjkInput(translated, code))) {
+        inputFailure = { kind: invalidQuestion ? "input-question" : "input-language" }
         const failure = translationFailure(inputFailure)
         errorHint = failure.hint ?? errorHint
         translated = undefined

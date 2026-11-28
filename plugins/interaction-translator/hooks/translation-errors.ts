@@ -11,14 +11,15 @@ export type TranslationFailure =
   | { kind: "api-http"; status: number }
   | { kind: "markers"; validation?: MarkerValidation }
   | { kind: "segments"; validation: SegmentValidation }
-  | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-question" | "input-handoff" | "queue" | "capacity" | "unknown" }
+  | { kind: "codex-process" | "empty" | "truncated" | "configuration" | "credentials" | "api-url" | "api-request" | "api-response" | "api-length" | "command-prefix" | "input-question" | "input-language" | "input-handoff" | "queue" | "capacity" | "unknown" }
 
 const ERROR_CODES: Record<TranslationFailure["kind"], string> = {
   timeout: "TR_CLI_TIMEOUT", "codex-exit": "TR_CLI_EXIT", "codex-process": "TR_CLI_PROCESS",
   empty: "TR_CLI_EMPTY", truncated: "TR_CLI_TRUNCATED", markers: "TR_TEXT_INVALID", segments: "TR_SEGMENT_INVALID",
   configuration: "TR_CONFIG", credentials: "TR_API_KEY", "api-url": "TR_API_URL",
   "api-http": "TR_API_HTTP", "api-request": "TR_API_REQUEST", "api-response": "TR_API_RESPONSE", "api-length": "TR_API_LENGTH",
-  "command-prefix": "TR_INPUT_PREFIX", "input-question": "TR_INPUT_QUESTION", "input-handoff": "TR_INPUT_HANDOFF", queue: "TR_QUEUE", capacity: "TR_CAPACITY", unknown: "TR_UNKNOWN",
+  "command-prefix": "TR_INPUT_PREFIX", "input-question": "TR_INPUT_QUESTION", "input-language": "TR_INPUT_LANGUAGE",
+  "input-handoff": "TR_INPUT_HANDOFF", queue: "TR_QUEUE", capacity: "TR_CAPACITY", unknown: "TR_UNKNOWN",
 }
 
 export function translationFailureCode(failure: TranslationFailure): string { return ERROR_CODES[failure.kind] }
@@ -84,6 +85,12 @@ export function translationFailureHint(failure: TranslationFailure, language: La
       en: "The translation did not preserve the input as a question. Retry the translation.",
       jp: "元の質問が疑問文として翻訳されなかったため、送信を停止しました。再試行してください。",
       fr: "La traduction n’a pas conservé la forme interrogative du texte source. Réessayez.",
+    }[language]
+    case "input-language": return {
+      cn: "输入译文仍是明显未翻译的中日文正文，已阻止提交。请重试。",
+      en: "The translated input still contains untranslated Chinese or Japanese prose. Retry the translation.",
+      jp: "入力の翻訳結果に未翻訳の中国語または日本語の本文が残っているため、送信を停止しました。再試行してください。",
+      fr: "La traduction contient encore du texte chinois ou japonais à traduire. Réessayez.",
     }[language]
     case "input-handoff": return {
       cn: "输入译文交付失败或等待队列已满，请处理待发送消息后重试。",

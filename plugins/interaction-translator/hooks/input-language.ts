@@ -45,6 +45,19 @@ export function preservesSettingQuestion(translation: string, target: "en" | "fr
   return extraSentence === undefined
 }
 
+export function hasUntranslatedCjkInput(translation: string, target: Language): boolean {
+  if (target !== "en" && target !== "fr") return false
+  const { text } = detectionProse(translation)
+  const cjkProse = chineseEvidence.test(text) || /\p{Script=Han}[是的了]\p{Script=Han}|(?:[吗呢吧嘛]|です|ます|ください|ません)(?=[。！？,.!?，、；;\s]|$)/u.test(text)
+  if (!cjkProse) return false
+
+  // An isolated name is ambiguous. Require CJK sentence evidence and no
+  // recognizable target prose. Technical words alone do not count.
+  const vocabulary = target === "en" ? english : french
+  const words = text.toLowerCase().match(/\p{Script=Latin}+/gu) ?? []
+  return !words.some(word => vocabulary.has(word))
+}
+
 function sentenceMatches(prose: string, target: Language): boolean {
   const han = /\p{Script=Han}/u.test(prose)
   const kana = /\p{Script=Hiragana}|\p{Script=Katakana}|[ーｰ]/u.test(prose)

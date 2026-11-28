@@ -1,5 +1,14 @@
 import { expect, test } from "claude-code/testing"
-import { canSkipInputTranslation, MAX_LANGUAGE_PROSE_CHARS, MAX_LANGUAGE_SOURCE_CHARS } from "../hooks/input-language"
+import { canSkipInputTranslation, hasUntranslatedCjkInput, MAX_LANGUAGE_PROSE_CHARS, MAX_LANGUAGE_SOURCE_CHARS } from "../hooks/input-language"
+
+test("wrong-language input validation requires prose, allowing preserved code and names", () => {
+  expect(hasUntranslatedCjkInput("请检查 callback 和 scan 的数据。", "en")).toBe(true)
+  expect(hasUntranslatedCjkInput("この設定を確認してください。", "fr")).toBe(true)
+  expect(hasUntranslatedCjkInput("Check the label 请检查. Use `这条命令` and /tmp/设置.txt.", "en")).toBe(false)
+  expect(hasUntranslatedCjkInput("`请检查这条命令`", "fr")).toBe(false)
+  expect(hasUntranslatedCjkInput("上海浦东发展银行", "en")).toBe(false)
+  expect(hasUntranslatedCjkInput("请检查 callback 和 scan 的数据。", "cn")).toBe(false)
+})
 import type { Language } from "../hooks/languages"
 
 const same: Array<[Language, string]> = [

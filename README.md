@@ -154,6 +154,8 @@ claude plugin install interaction-translator@claude-interaction-translator \
 
 输入翻译前会在本地检查正文语言。能明确判断输入已是目标提示词语言时，直接保留原文，不调用翻译 API 或 Codex，也不显示输入翻译进度。例如目标为英文时，英文输入可以直接发送；Claude 的回复语言仍按配置执行。代码、路径和 URL 不参与语言判断；混合语言、判断不确定或超过本地检测范围的输入继续走正常翻译。
 
+目标提示词语言为英文或法文时，如果返回内容仍明显是中文或日文正文，插件会以 `TR_INPUT_LANGUAGE` 阻止提交并提示重试。判断依据是正文中的语言特征，代码、路径和 URL 不参与判断。
+
 | 模式 | 交互界面 | 模型历史 | `claude -p` |
 | --- | --- | --- | --- |
 | `display-only`（默认） | 助手回复按 `manual / final / auto`；选择面板始终自动翻译 | 保留 Claude 原始回复，默认英文 | 输出原始回复，不调用输出翻译 |
